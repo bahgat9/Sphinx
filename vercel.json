@@ -5,7 +5,7 @@
       "src": "server.js",
       "use": "@vercel/node",
       "config": {
-        "includeFiles": ["**/*.js", "**/*.json"]
+        "includeFiles": ["**/*.js", "**/*.json", ".env"]
       }
     }
   ],
@@ -13,12 +13,12 @@
     {
       "src": "/api/(.*)",
       "dest": "server.js",
-      "methods": ["GET", "POST", "OPTIONS"]
+      "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
     },
     {
       "src": "/",
       "dest": "server.js",
-      "methods": ["GET"]
+      "methods": ["GET", "OPTIONS"]
     }
   ],
   "env": {
