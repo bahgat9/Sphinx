@@ -1,268 +1,279 @@
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
-const cors = require('cors');
+const cors = require('cors'); // Still useful for main requests
 const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 
-// CORS Configuration:
-// Rely primarily on vercel.json for deployed CORS headers.
-// This Express cors setup is for local development and as a comprehensive fallback.
-app.use(cors({
-  origin: [
-    'https://bahgat9.github.io', // Your frontend origin
-    'https://qr-attendance-8x8iqvpdq-bahgats-projects-6796583a.vercel.app', // Your backend origin
-    'http://localhost:3000', // For local server development
-    // Add your local frontend development URL if different, e.g., http://localhost:5173 for Vite
-  ],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-}));
+// --- START URGENT CORS FIX ---
+// Explicitly handle OPTIONS requests globally. This should be the first or among the first middleware.
+app.options('*', (req, res) => {
+  // Log incoming OPTIONS request for debugging in Vercel logs
+  console.log(`Received OPTIONS request for: ${req.url} from origin: ${req.headers.origin}`);
+  
+  const origin = req.headers.origin;
+  const allowedOrigins = [
+    'https://bahgat9.github.io',
+    'https://qr-attendance-8x8iqvpdq-bahgats-projects-6796583a.vercel.app', // Your Vercel app origin
+    'http://localhost:3000' // For local development
+  ];
 
-// Middleware to parse JSON bodies. CRITICAL: This must come before your routes.
-app.use(express.json());
-
-// Middleware to log all incoming requests to API routes
-app.use('/api', (req, res, next) => {
-  console.log(`[${new Date().toISOString()}] SERVER: Received ${req.method} request for ${req.originalUrl}`);
-  console.log(`[${new Date().toISOString()}] SERVER: Request Headers: ${JSON.stringify(req.headers)}`);
-  if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
-    console.log(`[${new Date().toISOString()}] SERVER: Request Body: ${JSON.stringify(req.body)}`);
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    console.log(`OPTIONS: Set Access-Control-Allow-Origin to: ${origin}`);
+  } else {
+    console.log(`OPTIONS: Origin ${origin} not in allowedOrigins.`);
+    // Even if not in allowedOrigins, for OPTIONS, some servers might still send generic headers
+    // or let the main cors handler decide. For now, we only set ACAO if origin is allowed.
+    // If issues persist, you might need to always set ACAO to a default or '*' if appropriate,
+    // but specific origin is best practice with credentials.
   }
-  next();
+  
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE'); // Be generous with methods
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept, Origin'); // Common headers
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  
+  // Respond with 204 No Content for OPTIONS, which is standard.
+  // This tells the browser the preflight check is successful.
+  res.status(204).send();
 });
 
+// General CORS middleware for all other requests (GET, POST, etc.)
+// This will apply after the OPTIONS request has been successfully handled.
+const corsOptions = {
+  origin: function (origin, callback) {
+    const allowedOrigins = [
+      'https://bahgat9.github.io',
+      'https://qr-attendance-8x8iqvpdq-bahgats-projects-6796583a.vercel.app',
+      'http://localhost:3000'
+    ];
+    // Allow requests with no origin (like mobile apps or curl requests) or from allowed origins
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      console.log(`CORS: Allowed origin: ${origin || 'N/A'}`);
+      callback(null, true);
+    } else {
+      console.error(`CORS: Blocked origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], // OPTIONS is handled by app.options above
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  credentials: true
+};
+app.use(cors(corsOptions));
+// --- END URGENT CORS FIX ---
 
-// MongoDB Connection
-const MONGODB_URI = process.env.MONGODB_URI;
-if (!MONGODB_URI) {
-    console.error("FATAL ERROR: MONGODB_URI is not defined in .env or environment variables.");
-    process.exit(1);
-}
+// Body parser middleware - should come AFTER CORS setup
+app.use(express.json());
+
+// MongoDB Connection with robust error handling
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://BY7:bahgat_88@qr-attendance.nphqruk.mongodb.net/qr-attendance?retryWrites=true&w=majority';
 
 async function connectDB() {
   try {
-    console.log("SERVER: Attempting to connect to MongoDB...");
     await mongoose.connect(MONGODB_URI, {
-      serverSelectionTimeoutMS: 7000, // Increased slightly
-      socketTimeoutMS: 45000,
-      connectTimeoutMS: 20000,
-      maxPoolSize: 10
+      serverSelectionTimeoutMS: 5000, // Shortened for faster connection attempts or failures
+      socketTimeoutMS: 30000,
+      connectTimeoutMS: 10000, // Standard connection timeout
+      maxPoolSize: 10 // Default is 5, can be increased if needed
     });
-    console.log('SERVER: ✅ MongoDB Connected Successfully.');
-
+    console.log('✅ MongoDB Connected');
+    
     const db = mongoose.connection.db;
     const collections = await db.listCollections().toArray();
-    const collectionNames = collections.map(c => c.name);
-    console.log('SERVER: Existing collections:', collectionNames.join(', '));
+    console.log('Available collections:', collections.map(c => c.name));
 
-    if (!collectionNames.includes('members')) {
-      console.log('SERVER: Collection "members" not found. Creating...');
-      await db.createCollection('members');
-      console.log('SERVER: ✅ Created "members" collection.');
-    }
-    // Your screenshot shows 'attendance' (singular)
-    if (!collectionNames.includes('attendance')) {
-      console.log('SERVER: Collection "attendance" (singular) not found. Creating...');
-      await db.createCollection('attendance');
-      console.log('SERVER: ✅ Created "attendance" collection.');
-    }
   } catch (err) {
-    console.error('SERVER: ❌ MongoDB Connection Error:', err.message);
-    if (err.reason) console.error('SERVER: MongoDB Connection Error Reason:', JSON.stringify(err.reason, null, 2));
-    // Do not exit process here for serverless, let Vercel handle function errors.
-    // process.exit(1); // This is fine for local, but can be problematic for serverless retries.
-    throw err; // Re-throw to be caught by Vercel or a higher-level handler
+    console.error('❌ MongoDB Connection Error:', err.message);
+    // console.error('Full MongoDB error object:', err); // More detailed error
+    // process.exit(1); // Exit process on critical DB connection failure (optional)
   }
 }
+connectDB();
 
-// Database Schemas
-const memberSchema = new mongoose.Schema({
-  name: { type: String, required: [true, 'Name is required'], trim: true, maxlength: [100, 'Name cannot exceed 100 characters'] },
-  qrCode: { type: String, required: true, unique: true, default: () => uuidv4() },
-  createdAt: { type: Date, default: Date.now, index: true }
+mongoose.connection.on('error', err => {
+  console.error('❌ MongoDB runtime error:', err.message);
+});
+mongoose.connection.on('disconnected', () => {
+  console.warn('⚠️ MongoDB disconnected.');
+});
+mongoose.connection.on('reconnected', () => {
+  console.info('🔄 MongoDB reconnected.');
 });
 
-const attendanceSchema = new mongoose.Schema({
-  memberId: { type: mongoose.Schema.Types.ObjectId, ref: 'Member', required: true, index: true },
-  memberName: { type: String, required: true },
-  date: { type: String, required: true, index: true }, // YYYY-MM-DD
-  timestamp: { type: Date, default: Date.now }
-}, { collection: 'attendance' }); // Explicitly set collection name
 
-memberSchema.index({ qrCode: 1 });
-// Unique constraint for a member's attendance per day
-attendanceSchema.index({ memberId: 1, date: 1 }, { unique: true });
-
+// Schemas
+const memberSchema = new mongoose.Schema({
+  name: { type: String, required: true, unique: true },
+  qrCode: { type: String, required: true, unique: true }, // This will store the name or ID for the QR
+  createdAt: { type: Date, default: Date.now }
+});
 const Member = mongoose.model('Member', memberSchema);
+
+const attendanceSchema = new mongoose.Schema({
+  memberId: { type: mongoose.Schema.Types.ObjectId, ref: 'Member', required: true },
+  memberName: { type: String, required: true }, // Denormalized for easier querying
+  date: { type: String, required: true }, // YYYY-MM-DD
+  timestamp: { type: Date, default: Date.now },
+  status: { type: String, enum: ['PRESENT', 'ABSENT'], default: 'PRESENT' } // Assuming default is present upon scan
+});
+// Index for faster querying of attendance by date and member
+attendanceSchema.index({ date: 1, memberId: 1 }, { unique: true }); // Ensure one record per member per day
+attendanceSchema.index({ date: 1 });
+
 const Attendance = mongoose.model('Attendance', attendanceSchema);
-
-async function initializeDatabaseAndApp() {
-    try {
-        await connectDB(); // Ensure DB is connected before routes are active
-        // Test data initialization (optional, consider if needed for every startup)
-        if (process.env.NODE_ENV !== 'production') {
-            // await initializeTestData(); // You can define this function if needed
-        }
-    } catch (error) {
-        console.error("SERVER: Failed to initialize database for the app:", error);
-        // If DB connection fails, API routes might still be set up but will fail.
-        // For serverless, the function might error out on first request if DB is down.
-    }
-}
-
-// Call initialization. For serverless, this runs when the function instance starts.
-initializeDatabaseAndApp();
 
 
 // API Routes
+
+// Root endpoint for health check or basic info
 app.get('/', (req, res) => {
-  res.status(200).json({ status: 'API is healthy and running', timestamp: new Date().toISOString() });
+  res.status(200).send('QR Attendance API is running. Timestamp: ' + new Date().toISOString());
 });
 
-// Register new member
+
+// Register a new member
 app.post('/api/members', async (req, res) => {
-  console.log(`[${new Date().toISOString()}] SERVER: /api/members POST route invoked.`);
+  console.log('POST /api/members request body:', req.body);
   try {
     const { name } = req.body;
-    console.log(`[${new Date().toISOString()}] SERVER: Received name for registration: "${name}"`);
-
     if (!name || typeof name !== 'string' || name.trim() === '') {
-      console.log(`[${new Date().toISOString()}] SERVER: Validation failed: Name is invalid.`);
-      return res.status(400).json({ error: 'Valid member name is required' });
+      console.log('Validation error: Name is required.');
+      return res.status(400).json({ error: 'Name is required.' });
     }
 
-    const trimmedName = name.trim();
-    console.log(`[${new Date().toISOString()}] SERVER: Attempting to create new Member with name: "${trimmedName}"`);
-    
-    const newMember = new Member({ name: trimmedName });
-    // qrCode will be auto-generated by schema default
+    const existingMember = await Member.findOne({ name: name.trim() });
+    if (existingMember) {
+      console.log(`Member already exists: ${name.trim()}`);
+      return res.status(409).json({ error: 'Member with this name already exists.' });
+    }
 
-    console.log(`[${new Date().toISOString()}] SERVER: New member object created (before save): ${JSON.stringify(newMember)}`);
-    
+    // For QR code, we can use the member's name or a unique ID. Using name for simplicity.
+    // Ensure it's URL-safe if it's complex, but for QR data, raw string is fine.
+    const qrCodeData = name.trim(); 
+
+    const newMember = new Member({ name: name.trim(), qrCode: qrCodeData });
     await newMember.save();
-    console.log(`[${new Date().toISOString()}] SERVER: Member saved successfully. ID: ${newMember._id}, QR: ${newMember.qrCode}`);
-
-    res.status(201).json({
-      _id: newMember._id.toString(), // Ensure _id is a string
-      name: newMember.name,
-      qrCode: newMember.qrCode,
-      createdAt: newMember.createdAt
-    });
-
+    console.log('Member registered successfully:', newMember);
+    res.status(201).json({ message: 'Member registered successfully', member: newMember });
   } catch (err) {
-    console.error(`[${new Date().toISOString()}] SERVER: ERROR in /api/members:`, err.message);
-    console.error(`[${new Date().toISOString()}] SERVER: Error stack:`, err.stack);
-    
-    if (err.code === 11000) { // MongoDB duplicate key error
-      console.error(`[${new Date().toISOString()}] SERVER: Duplicate key error (likely qrCode).`);
-      return res.status(409).json({ error: 'Duplicate data error. This QR code might already exist (highly unlikely with UUIDs). Please try again or contact support.' });
+    console.error('Error registering member:', err);
+    if (err.code === 11000) { // Duplicate key error
+        return res.status(409).json({ error: 'Member with this name or QR code data already exists (database constraint).' });
     }
-    if (err.name === 'ValidationError') {
-      console.error(`[${new Date().toISOString()}] SERVER: Mongoose validation error.`);
-      return res.status(400).json({ error: 'Validation failed.', details: err.errors });
-    }
-    // Generic server error
-    res.status(500).json({ error: 'Member registration failed due to an internal server error. Please check server logs.' });
+    res.status(500).json({ error: 'Failed to register member. ' + err.message });
   }
 });
 
-// Mark attendance
+// Record attendance
 app.post('/api/attendance', async (req, res) => {
-  console.log(`[${new Date().toISOString()}] SERVER: /api/attendance POST route invoked.`);
+  console.log('POST /api/attendance request body:', req.body);
   try {
-    const { qrCode } = req.body;
-    if (!qrCode) {
-      return res.status(400).json({ error: 'QR code is required' });
+    const { qrCodeData, date } = req.body; // Expecting qrCodeData (which is member's name) and date (YYYY-MM-DD)
+    
+    if (!qrCodeData || !date) {
+      return res.status(400).json({ error: 'QR code data (member name) and date are required.' });
     }
 
-    const member = await Member.findOne({ qrCode });
+    const member = await Member.findOne({ qrCode: qrCodeData }); // Find member by the data in QR
     if (!member) {
-      return res.status(404).json({ error: 'Member not found for the provided QR code' });
+      return res.status(404).json({ error: 'Member not found for the scanned QR code.' });
     }
 
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-    const existingAttendance = await Attendance.findOne({ memberId: member._id, date: today });
-
+    // Check if attendance already recorded for this member on this date
+    const existingAttendance = await Attendance.findOne({ memberId: member._id, date });
     if (existingAttendance) {
-      return res.status(200).json({
-        message: 'Attendance already marked for this member today',
-        memberName: member.name,
-        date: today,
-        attendanceId: existingAttendance._id.toString()
-      });
+      return res.status(409).json({ message: 'Attendance already recorded for this member today.', attendance: existingAttendance });
     }
 
-    const attendance = new Attendance({ memberId: member._id, memberName: member.name, date: today });
-    await attendance.save();
-    res.status(201).json({
-      message: 'Attendance recorded successfully',
-      memberName: member.name,
-      date: today,
-      attendanceId: attendance._id.toString()
+    const newAttendance = new Attendance({
+      memberId: member._id,
+      memberName: member.name, // Store member name for convenience
+      date: date, // Date from client (e.g., YYYY-MM-DD)
+      status: 'PRESENT'
     });
+    await newAttendance.save();
+    console.log('Attendance recorded:', newAttendance);
+    res.status(201).json({ message: 'Attendance recorded successfully', attendance: newAttendance });
   } catch (err) {
-    console.error(`[${new Date().toISOString()}] SERVER: ERROR in /api/attendance:`, err.message);
-    if (err.code === 11000) { // Unique constraint (memberId, date) violated
-        return res.status(409).json({ error: 'Attendance conflict. This member has already been marked present today (simultaneous request likely).' });
-    }
-    res.status(500).json({ error: 'Failed to mark attendance due to a server error.' });
+    console.error('Error recording attendance:', err);
+    res.status(500).json({ error: 'Failed to record attendance. ' + err.message });
   }
 });
 
-// Get attendance by date
+// Get attendance for a specific date
 app.get('/api/attendance/:date', async (req, res) => {
-  console.log(`[${new Date().toISOString()}] SERVER: /api/attendance/:date GET route invoked for date: ${req.params.date}.`);
+  console.log(`GET /api/attendance/${req.params.date}`);
   try {
-    const { date } = req.params;
+    const { date } = req.params; // Date in YYYY-MM-DD format
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      return res.status(400).json({ error: 'Invalid date format. Please use YYYY-MM-DD.' });
+        return res.status(400).json({ error: 'Invalid date format. Please use YYYY-MM-DD.' });
     }
-    // Populate memberId to get member's name, select only name and _id from member
-    const records = await Attendance.find({ date })
-                                    .populate({ path: 'memberId', select: 'name _id' })
-                                    .lean(); // .lean() for plain JS objects
-    res.status(200).json(records);
+    const records = await Attendance.find({ date }).populate('memberId', 'name').lean(); // Populate member name
+    
+    // Also fetch all members to determine who is absent
+    const allMembers = await Member.find().select('_id name').lean();
+    const presentMemberIds = new Set(records.map(r => r.memberId._id.toString()));
+
+    const attendanceWithAbsent = allMembers.map(member => {
+        const isPresent = presentMemberIds.has(member._id.toString());
+        if (isPresent) {
+            return records.find(r => r.memberId._id.toString() === member._id.toString());
+        } else {
+            return {
+                memberId: member._id,
+                memberName: member.name,
+                date: date,
+                status: 'ABSENT'
+            };
+        }
+    });
+    
+    console.log(`Found ${attendanceWithAbsent.length} total records (including absent) for date: ${date}`);
+    res.status(200).json(attendanceWithAbsent);
   } catch (err) {
-    console.error(`[${new Date().toISOString()}] SERVER: ERROR in /api/attendance/:date:`, err.message);
-    res.status(500).json({ error: 'Failed to fetch attendance records.' });
+    console.error('Attendance fetch error:', err);
+    res.status(500).json({ error: 'Failed to fetch attendance. ' + err.message });
   }
 });
 
 // Get all members
 app.get('/api/members', async (req, res) => {
-  console.log(`[${new Date().toISOString()}] SERVER: /api/members GET route invoked.`);
+  console.log('GET /api/members');
   try {
-    const members = await Member.find().sort({ name: 1 }).select('_id name qrCode createdAt').lean();
+    const members = await Member.find()
+      .sort({ name: 1 }) // Sort by name
+      .select('name qrCode createdAt') // Select specific fields
+      .lean(); // Use .lean() for faster queries if not modifying docs
+    
+    console.log(`Fetched ${members.length} members.`);
     res.status(200).json(members);
   } catch (err) {
-    console.error(`[${new Date().toISOString()}] SERVER: ERROR in /api/members GET:`, err.message);
-    res.status(500).json({ error: 'Failed to fetch members list.' });
+    console.error('Members fetch error:', err);
+    res.status(500).json({ error: 'Failed to fetch members. ' + err.message });
   }
 });
 
-// Global error handling middleware (catches errors from next(err) or unhandled sync errors in routes)
-// This should be defined AFTER all other app.use() and routes
+// Error handling middleware - MUST be last
 app.use((err, req, res, next) => {
-  console.error(`[${new Date().toISOString()}] SERVER: UNHANDLED ERROR MIDDLEWARE TRIGGERED:`, err.message);
-  console.error(err.stack);
-  // Avoid sending stack trace to client in production
-  const statusCode = err.status || err.statusCode || 500;
-  res.status(statusCode).json({
-    error: 'An unexpected internal server error occurred.',
-    message: process.env.NODE_ENV === 'production' ? 'Please contact support.' : err.message 
+  console.error('Global Server Error Handler:', err);
+  // Check if headers have already been sent
+  if (res.headersSent) {
+    return next(err); // Delegate to default Express error handler
+  }
+  res.status(err.status || 500).json({ 
+    error: err.message || 'Internal server error. Please try again later.' 
   });
 });
 
-// For Vercel, you export the app. Vercel handles the listening.
-// The app.listen block is for local development.
-if (process.env.NODE_ENV !== 'production') {
-    const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
+if (process.env.NODE_ENV !== 'test') { // Avoid starting server during tests if any
     app.listen(PORT, () => {
-      console.log(`SERVER: 🚀 Local server running on port ${PORT}`);
+      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`🔗 CORS-enabled for origins including: https://bahgat9.github.io`);
+      console.log(`MongoDB URI in use: ${MONGODB_URI.substring(0, MONGODB_URI.indexOf('@'))}...`); // Mask credentials
     });
 }
 
-module.exports = app;
+module.exports = app; // Export for Vercel
