@@ -90,7 +90,7 @@
     <div id="loading" class="fixed inset-0 bg-white z-50 flex items-center justify-center hidden">
         <div class="text-center">
             <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mx-auto"></div>
-            <p class="mt-4 text-gray-600">Connecting to database...</p>
+            <p class="mt-4 text-gray-600">Loading...</p>
         </div>
     </div>
 
@@ -166,11 +166,12 @@
 
     <script>
         // Server URL - Replace with your actual backend URL
-        const SERVER_URL = "https://qr-attendance-8x8iqvpdq-bahgats-projects-6796583a.vercel.app"; // Change this when deploying
+        const SERVER_URL = "https://qr-attendance-8x8iqvpdq-bahgats-projects-6796583a.vercel.app";
         
-        // Enhanced fetch with error handling
+        // Enhanced fetch with better error handling
         async function safeFetch(url, options = {}) {
             try {
+                console.log("Making request to:", url);
                 const response = await fetch(url, {
                     ...options,
                     headers: {
@@ -180,11 +181,19 @@
                 });
                 
                 if (!response.ok) {
-                    const error = await response.json();
-                    throw new Error(error.error || 'Request failed');
+                    let errorData;
+                    try {
+                        errorData = await response.json();
+                    } catch {
+                        errorData = { error: await response.text() };
+                    }
+                    console.error("API Error Response:", errorData);
+                    throw new Error(errorData.error || 'Request failed with status ' + response.status);
                 }
                 
-                return await response.json();
+                const data = await response.json();
+                console.log("API Response:", data);
+                return data;
             } catch (error) {
                 console.error(`API Error (${url}):`, error);
                 showToast(error.message || 'Network error', 'error');
@@ -266,24 +275,31 @@
             });
         });
 
-        // Member Registration
+        // Improved Member Registration
         async function registerMember() {
             const name = memberNameInput.value.trim();
-            if (!name) return showToast("Please enter a name", "error");
+            if (!name) {
+                showToast("Please enter a name", "error");
+                memberNameInput.focus();
+                return;
+            }
 
+            const originalButtonText = registerButton.textContent;
             registerButton.disabled = true;
             registerButton.textContent = "Registering...";
             showLoading();
 
             try {
+                console.log("Registering member:", name);
                 const data = await safeFetch(`${SERVER_URL}/api/members`, {
                     method: 'POST',
-                    body: JSON.stringify({ 
-                        name, 
-                        qrCode: crypto.randomUUID() 
-                    })
+                    body: JSON.stringify({ name }) // Let server generate QR code
                 });
-                
+
+                if (!data.qrCode) {
+                    throw new Error("No QR code received from server");
+                }
+
                 modalMemberName.textContent = `Name: ${name}`;
                 qrCodeContainer.innerHTML = '';
                 new QRCode(qrCodeContainer, {
@@ -294,14 +310,21 @@
                     colorLight: "#ffffff",
                     correctLevel: QRCode.CorrectLevel.H
                 });
+                
                 qrCodeModal.style.display = "flex";
                 memberNameInput.value = '';
-                showToast("Member registered successfully!", "success");
+                showToast(`${name} registered successfully!`, "success");
+                
+                // Refresh members list if we're on the view tab
+                if (document.querySelector('[data-tab="view"].active')) {
+                    loadTodaysAttendance();
+                }
             } catch (error) {
-                console.error("Registration error:", error);
+                console.error("Registration failed:", error);
+                showToast(`Registration failed: ${error.message}`, "error");
             } finally {
                 registerButton.disabled = false;
-                registerButton.textContent = "Register & Generate QR";
+                registerButton.textContent = originalButtonText;
                 hideLoading();
             }
         }
@@ -310,12 +333,13 @@
 
         // QR Code Scanning
         function onScanSuccess(decodedText, decodedResult) {
+            console.log("QR Code scanned:", decodedText);
             scanResultP.textContent = `Scanned Member ID: ${decodedText}`;
             markAttendance(decodedText);
         }
 
         function onScanFailure(error) {
-            console.warn(`QR error = ${error}`);
+            console.warn(`QR scan error: ${error}`);
         }
         
         function updateScanButtons(isScanning) {
@@ -394,6 +418,7 @@
             } catch (error) {
                 console.error("Attendance error:", error);
                 scanResultP.textContent = `Error: ${error.message}`;
+                showToast(`Attendance error: ${error.message}`, "error");
             } finally {
                 hideLoading();
             }
@@ -422,8 +447,10 @@
             showLoading();
 
             try {
-                const records = await safeFetch(`${SERVER_URL}/api/attendance/${dateString}`);
-                const members = await safeFetch(`${SERVER_URL}/api/members`);
+                const [records, members] = await Promise.all([
+                    safeFetch(`${SERVER_URL}/api/attendance/${dateString}`),
+                    safeFetch(`${SERVER_URL}/api/members`)
+                ]);
                 
                 if (members.length === 0) {
                     displayElement.innerHTML = `<p class="text-gray-500 text-sm py-2">No members registered yet.</p>`;
