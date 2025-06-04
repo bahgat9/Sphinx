@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QR Attendance Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            overscroll-behavior-y: contain;
+        }
+        .tab-button.active {
+            border-bottom-color: #3B82F6;
+            color: #3B82F6;
+            font-weight: 600;
+        }
+        .tab-button {
+            border-bottom-width: 2px;
+            border-bottom-color: transparent;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 100;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.5);
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 90%;
+            max-width: 400px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .close-button {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        #qrCodeContainer canvas, #qrCodeContainer img {
+            margin: 10px auto;
+            display: block;
+        }
+        #reader {
+            width: 100%;
+            border: 1px solid #e5e7eb;
+            border-radius: 0.5rem;
+        }
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 20px;
+            border-radius: 8px;
+            color: white;
+            font-size: 0.875rem;
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out;
+            pointer-events: none;
+        }
+        .toast.show {
+            opacity: 1;
+        }
+        .toast.success {
+            background-color: #10B981;
+        }
+        .toast.error {
+            background-color: #EF4444;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center">
+    <div class="w-full max-w-md bg-white shadow-lg rounded-lg mt-4 mb-4">
+        <header class="bg-blue-600 text-white p-4 rounded-t-lg">
+            <h1 class="text-2xl font-bold text-center">Attendance Tracker</h1>
+        </header>
+
+        <nav class="flex border-b border-gray-200">
+            <button data-tab="register" class="tab-button flex-1 py-3 px-2 text-sm font-medium text-gray-600 hover:bg-gray-50 focus:outline-none active">Register Member</button>
+            <button data-tab="scan" class="tab-button flex-1 py-3 px-2 text-sm font-medium text-gray-600 hover:bg-gray-50 focus:outline-none">Scan QR</button>
+            <button data-tab="view" class="tab-button flex-1 py-3 px-2 text-sm font-medium text-gray-600 hover:bg-gray-50 focus:outline-none">View Attendance</button>
+        </nav>
+
+        <main class="p-4 sm:p-6">
+            <div id="registerTab" class="tab-content space-y-4">
+                <h2 class="text-xl font-semibold text-gray-700">Register New Member</h2>
+                <div>
+                    <label for="memberName" class="block text-sm font-medium text-gray-700">Member Name</label>
+                    <input type="text" id="memberName" name="memberName" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm" placeholder="Enter member's full name">
+                </div>
+                <button id="registerButton" class="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-4 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                    Register & Generate QR
+                </button>
+                <div id="qrCodeModal" class="modal">
+                    <div class="modal-content">
+                        <span class="close-button" id="closeModalButton">&times;</span>
+                        <h3 class="text-lg font-medium mb-2">Member QR Code</h3>
+                        <p id="modalMemberName" class="text-sm text-gray-600 mb-2"></p>
+                        <div id="qrCodeContainer" class="p-2 border border-gray-300 rounded inline-block"></div>
+                        <p class="text-xs text-gray-500 mt-2">Ask member to save or screenshot this QR code.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div id="scanTab" class="tab-content hidden space-y-4">
+                <h2 class="text-xl font-semibold text-gray-700">Scan Member QR Code</h2>
+                <div id="reader" class="bg-gray-50 rounded-lg"></div>
+                <button id="startScanButton" class="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">Start Camera Scan</button>
+                <button id="stopScanButton" class="w-full bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 hidden">Stop Camera Scan</button>
+                <p id="scanResult" class="text-sm text-gray-600 text-center"></p>
+            </div>
+
+            <div id="viewTab" class="tab-content hidden space-y-4">
+                <h2 class="text-xl font-semibold text-gray-700">View Attendance</h2>
+                <div class="flex space-x-2 border-b">
+                    <button data-subtab="today" class="subtab-button flex-1 py-2 px-1 text-sm font-medium text-gray-600 hover:bg-gray-50 focus:outline-none active">Today</button>
+                    <button data-subtab="historical" class="subtab-button flex-1 py-2 px-1 text-sm font-medium text-gray-600 hover:bg-gray-50 focus:outline-none">Historical</button>
+                </div>
+
+                <div id="todaySubTab" class="subtab-content space-y-3">
+                    <h3 id="todayDate" class="text-lg font-medium text-gray-700"></h3>
+                    <div id="todayAttendanceList" class="divide-y divide-gray-200">
+                        <p class="text-gray-500 text-sm py-2">Loading today's attendance...</p>
+                    </div>
+                </div>
+
+                <div id="historicalSubTab" class="subtab-content hidden space-y-3">
+                    <div>
+                        <label for="historicalDate" class="block text-sm font-medium text-gray-700">Select Date:</label>
+                        <input type="date" id="historicalDate" name="historicalDate" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm">
+                    </div>
+                    <button id="fetchHistoricalButton" class="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-semibold py-2 px-4 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">View Attendance for Date</button>
+                    <div id="historicalAttendanceList" class="divide-y divide-gray-200">
+                        <p class="text-gray-500 text-sm py-2">Select a date to view attendance.</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+        // Server URL - Replace with your actual backend URL
+        const SERVER_URL = "http://localhost:3000"; // Change this in production
+        
+        // UI Elements
+        const tabs = document.querySelectorAll('.tab-button');
+        const tabContents = document.querySelectorAll('.tab-content');
+        const registerButton = document.getElementById('registerButton');
+        const memberNameInput = document.getElementById('memberName');
+        const qrCodeModal = document.getElementById('qrCodeModal');
+        const closeModalButton = document.getElementById('closeModalButton');
+        const qrCodeContainer = document.getElementById('qrCodeContainer');
+        const modalMemberName = document.getElementById('modalMemberName');
+        const startScanButton = document.getElementById('startScanButton');
+        const stopScanButton = document.getElementById('stopScanButton');
+        const scanResultP = document.getElementById('scanResult');
+        const readerDiv = document.getElementById('reader');
+        const subTabs = document.querySelectorAll('.subtab-button');
+        const subTabContents = document.querySelectorAll('.subtab-content');
+        const todayDateEl = document.getElementById('todayDate');
+        const todayAttendanceListEl = document.getElementById('todayAttendanceList');
+        const historicalDateInput = document.getElementById('historicalDate');
+        const fetchHistoricalButton = document.getElementById('fetchHistoricalButton');
+        const historicalAttendanceListEl = document.getElementById('historicalAttendanceList');
+        const toastEl = document.getElementById('toast');
+        let html5QrCode = null;
+
+        // Toast Notification
+        function showToast(message, type = 'success', duration = 3000) {
+            toastEl.textContent = message;
+            toastEl.className = `toast ${type} show`;
+            setTimeout(() => {
+                toastEl.className = 'toast';
+            }, duration);
+        }
+
+        // Tab Navigation
+        tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                tabs.forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                const targetTab = tab.dataset.tab;
+                tabContents.forEach(content => {
+                    if (content.id === `${targetTab}Tab`) {
+                        content.classList.remove('hidden');
+                        if (targetTab === 'view') {
+                            loadTodaysAttendance();
+                        }
+                    } else {
+                        content.classList.add('hidden');
+                    }
+                });
+            });
+        });
+
+        subTabs.forEach(subtab => {
+            subtab.addEventListener('click', () => {
+                subTabs.forEach(st => st.classList.remove('active'));
+                subtab.classList.add('active');
+                const targetSubTab = subtab.dataset.subtab;
+                subTabContents.forEach(content => {
+                    content.classList.toggle('hidden', content.id !== `${targetSubTab}SubTab`);
+                });
+                if (targetSubTab === 'today') loadTodaysAttendance();
+            });
+        });
+
+        // Member Registration
+        async function registerMember() {
+            const name = memberNameInput.value.trim();
+            if (!name) return showToast("Please enter a name", "error");
+
+            registerButton.disabled = true;
+            registerButton.textContent = "Registering...";
+
+            try {
+                const qrCode = crypto.randomUUID();
+                const response = await fetch(`${SERVER_URL}/api/members`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, qrCode })
+                });
+                
+                if (!response.ok) throw new Error('Registration failed');
+                
+                const member = await response.json();
+                modalMemberName.textContent = `Name: ${name}`;
+                qrCodeContainer.innerHTML = '';
+                new QRCode(qrCodeContainer, {
+                    text: qrCode,
+                    width: 200,
+                    height: 200,
+                    colorDark: "#000000",
+                    colorLight: "#ffffff",
+                    correctLevel: QRCode.CorrectLevel.H
+                });
+                qrCodeModal.style.display = "flex";
+                memberNameInput.value = '';
+                showToast("Member registered successfully!", "success");
+            } catch (error) {
+                console.error("Error registering member:", error);
+                showToast("Failed to register member", "error");
+            } finally {
+                registerButton.disabled = false;
+                registerButton.textContent = "Register & Generate QR";
+            }
+        }
+
+        registerButton.addEventListener('click', registerMember);
+
+        // QR Code Scanning
+        function onScanSuccess(decodedText, decodedResult) {
+            scanResultP.textContent = `Scanned Member ID: ${decodedText}`;
+            markAttendance(decodedText);
+        }
+
+        function onScanFailure(error) {
+            console.warn(`QR error = ${error}`);
+        }
+        
+        function updateScanButtons(isScanning) {
+            startScanButton.classList.toggle('hidden', isScanning);
+            stopScanButton.classList.toggle('hidden', !isScanning);
+            readerDiv.style.borderColor = isScanning ? '#34D399' : '#e5e7eb';
+        }
+
+        startScanButton.addEventListener('click', () => {
+            if (!html5QrCode) {
+                html5QrCode = new Html5Qrcode("reader");
+            }
+
+            scanResultP.textContent = "Starting scanner...";
+            const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+            
+            Html5Qrcode.getCameras().then(cameras => {
+                if (cameras && cameras.length) {
+                    html5QrCode.start(
+                        { facingMode: "environment" },
+                        config,
+                        onScanSuccess,
+                        onScanFailure
+                    ).then(() => {
+                        updateScanButtons(true);
+                        scanResultP.textContent = "Scanner started. Point camera at QR code.";
+                    }).catch(err => {
+                        console.error("Error starting scanner:", err);
+                        scanResultP.textContent = `Error starting scanner: ${err.message}`;
+                        showToast(`Scanner Error: ${err.message}`, "error");
+                        updateScanButtons(false);
+                    });
+                } else {
+                    scanResultP.textContent = "No cameras found on this device.";
+                    showToast("No cameras found.", "error");
+                }
+            }).catch(err => {
+                scanResultP.textContent = `Camera permission error: ${err.message}`;
+                showToast("Camera permission denied.", "error");
+            });
+        });
+
+        stopScanButton.addEventListener('click', () => {
+            if (html5QrCode && html5QrCode.isScanning) {
+                html5QrCode.stop()
+                    .then(() => {
+                        updateScanButtons(false);
+                        scanResultP.textContent = "Scanner stopped.";
+                        showToast("Scanner stopped.", "success");
+                    })
+                    .catch(err => {
+                        console.error("Error stopping scanner:", err);
+                        showToast("Error stopping scanner.", "error");
+                    });
+            }
+        });
+        
+        // Attendance Logic
+        async function markAttendance(qrCode) {
+            scanResultP.textContent = `Processing attendance for ${qrCode}...`;
+
+            try {
+                const response = await fetch(`${SERVER_URL}/api/attendance`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ qrCode })
+                });
+                
+                if (!response.ok) throw new Error('Attendance marking failed');
+                
+                const result = await response.json();
+                showToast(`${result.memberName} marked present!`, "success");
+                scanResultP.textContent = `${result.memberName} marked present.`;
+                
+                if (document.getElementById('viewTab').classList.contains('active') && 
+                    document.getElementById('todaySubTab').classList.contains('active')) {
+                    loadTodaysAttendance();
+                }
+            } catch (error) {
+                console.error("Error marking attendance:", error);
+                showToast("Error marking attendance", "error");
+                scanResultP.textContent = `Error: ${error.message}`;
+            }
+        }
+
+        function formatDate(dateObj) {
+            const year = dateObj.getFullYear();
+            const month = (dateObj.getMonth() + 1).toString().padStart(2, '0');
+            const day = dateObj.getDate().toString().padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+        
+        function displayFriendlyDate(dateString) {
+            const date = new Date(dateString + 'T00:00:00');
+            return date.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        }
+
+        async function loadTodaysAttendance() {
+            const todayStr = formatDate(new Date());
+            todayDateEl.textContent = `Today: ${displayFriendlyDate(todayStr)}`;
+            await fetchAndDisplayAttendance(todayStr, todayAttendanceListEl);
+        }
+        
+        fetchHistoricalButton.addEventListener('click', async () => {
+            const selectedDate = historicalDateInput.value;
+            if (!selectedDate) {
+                showToast("Please select a date.", "error");
+                return;
+            }
+            await fetchAndDisplayAttendance(selectedDate, historicalAttendanceListEl);
+        });
+
+        async function fetchAndDisplayAttendance(dateString, displayElement) {
+            displayElement.innerHTML = `<p class="text-gray-500 text-sm py-2">Loading attendance for ${displayFriendlyDate(dateString)}...</p>`;
+
+            try {
+                const response = await fetch(`${SERVER_URL}/api/attendance/${dateString}`);
+                if (!response.ok) throw new Error('Failed to load attendance');
+                
+                const records = await response.json();
+                
+                if (records.length === 0) {
+                    displayElement.innerHTML = `<p class="text-gray-500 text-sm py-2">No attendance records found.</p>`;
+                    return;
+                }
+                
+                // Get all members to compare
+                const membersResponse = await fetch(`${SERVER_URL}/api/members`);
+                if (!membersResponse.ok) throw new Error('Failed to load members');
+                
+                const allMembers = await membersResponse.json();
+                
+                let listHtml = '';
+                allMembers.forEach(member => {
+                    const attended = records.some(r => r.memberId === member._id);
+                    listHtml += `
+                        <div class="py-3 sm:py-4 flex items-center justify-between">
+                            <p class="text-sm font-medium text-gray-900 truncate">${member.name}</p>
+                            ${attended 
+                                ? '<span class="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-green-600 bg-green-200">PRESENT</span>' 
+                                : '<span class="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-red-600 bg-red-200">ABSENT</span>'}
+                        </div>
+                    `;
+                });
+                
+                displayElement.innerHTML = listHtml;
+            } catch (error) {
+                console.error(`Error fetching attendance:`, error);
+                displayElement.innerHTML = `<p class="text-red-500 text-sm py-2">Error loading attendance. ${error.message}</p>`;
+                showToast(`Error loading attendance: ${error.message}`, "error");
+            }
+        }
+
+        // Modal Close Handler
+        closeModalButton.addEventListener('click', () => {
+            qrCodeModal.style.display = "none";
+        });
+        window.addEventListener('click', (event) => {
+            if (event.target == qrCodeModal) {
+                qrCodeModal.style.display = "none";
+            }
+        });
+
+        // Set default date for historical input to today
+        historicalDateInput.value = formatDate(new Date());
+
+        // Initial load for today's attendance
+        loadTodaysAttendance();
+    </script>
+</body>
+</html>
