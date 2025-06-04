@@ -40,6 +40,10 @@
         {
           "key": "Access-Control-Allow-Headers",
           "value": "Content-Type"
+        },
+        {
+          "key": "Access-Control-Allow-Credentials",
+          "value": "true"  // <-- ADD THIS LINE
         }
       ]
     }
