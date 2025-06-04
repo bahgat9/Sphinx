@@ -87,6 +87,13 @@
     </style>
 </head>
 <body class="bg-gray-100 min-h-screen flex flex-col items-center">
+    <div id="loading" class="fixed inset-0 bg-white z-50 flex items-center justify-center hidden">
+        <div class="text-center">
+            <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mx-auto"></div>
+            <p class="mt-4 text-gray-600">Connecting to database...</p>
+        </div>
+    </div>
+
     <div class="w-full max-w-md bg-white shadow-lg rounded-lg mt-4 mb-4">
         <header class="bg-blue-600 text-white p-4 rounded-t-lg">
             <h1 class="text-2xl font-bold text-center">Attendance Tracker</h1>
@@ -159,8 +166,32 @@
 
     <script>
         // Server URL - Replace with your actual backend URL
-        const SERVER_URL = "http://localhost:3000"; // Change this in production
+        const SERVER_URL = "http://localhost:3000"; // Change this when deploying
         
+        // Enhanced fetch with error handling
+        async function safeFetch(url, options = {}) {
+            try {
+                const response = await fetch(url, {
+                    ...options,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    }
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Request failed');
+                }
+                
+                return await response.json();
+            } catch (error) {
+                console.error(`API Error (${url}):`, error);
+                showToast(error.message || 'Network error', 'error');
+                throw error;
+            }
+        }
+
         // UI Elements
         const tabs = document.querySelectorAll('.tab-button');
         const tabContents = document.querySelectorAll('.tab-content');
@@ -182,7 +213,18 @@
         const fetchHistoricalButton = document.getElementById('fetchHistoricalButton');
         const historicalAttendanceListEl = document.getElementById('historicalAttendanceList');
         const toastEl = document.getElementById('toast');
+        const loadingEl = document.getElementById('loading');
         let html5QrCode = null;
+
+        // Show loading spinner
+        function showLoading() {
+            loadingEl.classList.remove('hidden');
+        }
+
+        // Hide loading spinner
+        function hideLoading() {
+            loadingEl.classList.add('hidden');
+        }
 
         // Toast Notification
         function showToast(message, type = 'success', duration = 3000) {
@@ -231,22 +273,21 @@
 
             registerButton.disabled = true;
             registerButton.textContent = "Registering...";
+            showLoading();
 
             try {
-                const qrCode = crypto.randomUUID();
-                const response = await fetch(`${SERVER_URL}/api/members`, {
+                const data = await safeFetch(`${SERVER_URL}/api/members`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, qrCode })
+                    body: JSON.stringify({ 
+                        name, 
+                        qrCode: crypto.randomUUID() 
+                    })
                 });
                 
-                if (!response.ok) throw new Error('Registration failed');
-                
-                const member = await response.json();
                 modalMemberName.textContent = `Name: ${name}`;
                 qrCodeContainer.innerHTML = '';
                 new QRCode(qrCodeContainer, {
-                    text: qrCode,
+                    text: data.qrCode,
                     width: 200,
                     height: 200,
                     colorDark: "#000000",
@@ -257,11 +298,11 @@
                 memberNameInput.value = '';
                 showToast("Member registered successfully!", "success");
             } catch (error) {
-                console.error("Error registering member:", error);
-                showToast("Failed to register member", "error");
+                console.error("Registration error:", error);
             } finally {
                 registerButton.disabled = false;
                 registerButton.textContent = "Register & Generate QR";
+                hideLoading();
             }
         }
 
@@ -335,17 +376,14 @@
         // Attendance Logic
         async function markAttendance(qrCode) {
             scanResultP.textContent = `Processing attendance for ${qrCode}...`;
+            showLoading();
 
             try {
-                const response = await fetch(`${SERVER_URL}/api/attendance`, {
+                const result = await safeFetch(`${SERVER_URL}/api/attendance`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ qrCode })
                 });
                 
-                if (!response.ok) throw new Error('Attendance marking failed');
-                
-                const result = await response.json();
                 showToast(`${result.memberName} marked present!`, "success");
                 scanResultP.textContent = `${result.memberName} marked present.`;
                 
@@ -354,9 +392,10 @@
                     loadTodaysAttendance();
                 }
             } catch (error) {
-                console.error("Error marking attendance:", error);
-                showToast("Error marking attendance", "error");
+                console.error("Attendance error:", error);
                 scanResultP.textContent = `Error: ${error.message}`;
+            } finally {
+                hideLoading();
             }
         }
 
@@ -378,37 +417,21 @@
             await fetchAndDisplayAttendance(todayStr, todayAttendanceListEl);
         }
         
-        fetchHistoricalButton.addEventListener('click', async () => {
-            const selectedDate = historicalDateInput.value;
-            if (!selectedDate) {
-                showToast("Please select a date.", "error");
-                return;
-            }
-            await fetchAndDisplayAttendance(selectedDate, historicalAttendanceListEl);
-        });
-
         async function fetchAndDisplayAttendance(dateString, displayElement) {
             displayElement.innerHTML = `<p class="text-gray-500 text-sm py-2">Loading attendance for ${displayFriendlyDate(dateString)}...</p>`;
+            showLoading();
 
             try {
-                const response = await fetch(`${SERVER_URL}/api/attendance/${dateString}`);
-                if (!response.ok) throw new Error('Failed to load attendance');
+                const records = await safeFetch(`${SERVER_URL}/api/attendance/${dateString}`);
+                const members = await safeFetch(`${SERVER_URL}/api/members`);
                 
-                const records = await response.json();
-                
-                if (records.length === 0) {
-                    displayElement.innerHTML = `<p class="text-gray-500 text-sm py-2">No attendance records found.</p>`;
+                if (members.length === 0) {
+                    displayElement.innerHTML = `<p class="text-gray-500 text-sm py-2">No members registered yet.</p>`;
                     return;
                 }
                 
-                // Get all members to compare
-                const membersResponse = await fetch(`${SERVER_URL}/api/members`);
-                if (!membersResponse.ok) throw new Error('Failed to load members');
-                
-                const allMembers = await membersResponse.json();
-                
                 let listHtml = '';
-                allMembers.forEach(member => {
+                members.forEach(member => {
                     const attended = records.some(r => r.memberId === member._id);
                     listHtml += `
                         <div class="py-3 sm:py-4 flex items-center justify-between">
@@ -422,11 +445,21 @@
                 
                 displayElement.innerHTML = listHtml;
             } catch (error) {
-                console.error(`Error fetching attendance:`, error);
+                console.error(`Attendance load error:`, error);
                 displayElement.innerHTML = `<p class="text-red-500 text-sm py-2">Error loading attendance. ${error.message}</p>`;
-                showToast(`Error loading attendance: ${error.message}`, "error");
+            } finally {
+                hideLoading();
             }
         }
+
+        fetchHistoricalButton.addEventListener('click', async () => {
+            const selectedDate = historicalDateInput.value;
+            if (!selectedDate) {
+                showToast("Please select a date.", "error");
+                return;
+            }
+            await fetchAndDisplayAttendance(selectedDate, historicalAttendanceListEl);
+        });
 
         // Modal Close Handler
         closeModalButton.addEventListener('click', () => {
