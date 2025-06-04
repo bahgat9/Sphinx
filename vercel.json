@@ -4,17 +4,36 @@
     {
       "src": "server.js",
       "use": "@vercel/node",
-      "config": {
-        "includeFiles": ["**/*.js", "**/*.json"]
-      }
+      "config": { "includeFiles": ["**/*.js", "**/*.json"] }
     }
   ],
   "routes": [
+    // Handle preflight OPTIONS requests for ALL API routes
     {
       "src": "/api/(.*)",
-      "dest": "server.js",
-      "methods": ["GET", "POST", "OPTIONS"]
+      "methods": ["OPTIONS"],
+      "headers": {
+        "Access-Control-Allow-Origin": "https://bahgat9.github.io",
+        "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,PATCH,OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Max-Age": "86400"
+      },
+      "dest": "/dev/null", 
+      "status": 204 
     },
+    // Handle actual API requests (GET, POST, etc.)
+    {
+      "src": "/api/(.*)",
+      "headers": {
+        "Access-Control-Allow-Origin": "https://bahgat9.github.io",
+        "Access-Control-Allow-Credentials": "true"
+      },
+      "dest": "server.js"
+      // Removed specific methods here to let Express handle method routing within server.js
+      // Vercel will forward GET, POST, etc., to server.js
+    },
+    // Route for the root, if your server.js handles it
     {
       "src": "/",
       "dest": "server.js",
@@ -24,38 +43,5 @@
   "env": {
     "NODE_ENV": "production",
     "MONGODB_URI": "mongodb+srv://BY7:bahgat_88@qr-attendance.nphqruk.mongodb.net/qr-attendance?retryWrites=true&w=majority"
-  },
-  "headers": [
-    {
-      "source": "/api/(.*)",
-      "headers": [
-        {
-          "key": "Access-Control-Allow-Origin",
-          "value": "https://bahgat9.github.io"
-        },
-        {
-          "key": "Access-Control-Allow-Methods",
-          "value": "GET,POST,OPTIONS"
-        },
-        {
-          "key": "Access-Control-Allow-Headers",
-          "value": "Content-Type"
-        },
-        {
-          "key": "Access-Control-Allow-Credentials",
-          "value": "true"  // <-- ADD THIS LINE
-        }
-      ]
-    }
-  ],
-  "rewrites": [
-    {
-      "source": "/",
-      "destination": "/"
-    },
-    {
-      "source": "/api",
-      "destination": "/api"
-    }
-  ]
+  }
 }
