@@ -6,19 +6,34 @@ const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 
-// Enhanced CORS configuration
+// CORS Configuration:
+// Let vercel.json handle the detailed header specifics for deployment.
+// This Express cors setup is good for local development and as a fallback.
 app.use(cors({
   origin: [
-    'https://bahgat9.github.io',
-    'https://qr-attendance-8x8iqvpdq-bahgats-projects-6796583a.vercel.app',
-    'http://localhost:3000'
+    'https://bahgat9.github.io', // Your frontend origin
+    'https://qr-attendance-8x8iqvpdq-bahgats-projects-6796583a.vercel.app', // Your backend origin
+    'http://localhost:3000', // For local frontend development
+    'http://localhost:YOUR_LOCAL_FRONTEND_PORT' // If your local frontend runs on a different port
   ],
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type'],
-  credentials: true
+  credentials: true, // Important for Express to handle credentialed requests
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'], // Explicitly list methods
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'] // Explicitly list allowed headers
 }));
 
 app.use(express.json());
+
+// Middleware to log all incoming requests to API routes
+app.use('/api', (req, res, next) => {
+  console.log(`[${new Date().toISOString()}] Received ${req.method} request for ${req.originalUrl}`);
+  console.log('Request Headers:', JSON.stringify(req.headers, null, 2));
+  // Log body for POST/PUT requests (be careful with sensitive data in production logs)
+  if (req.method === 'POST' || req.method === 'PUT') {
+    console.log('Request Body:', JSON.stringify(req.body, null, 2));
+  }
+  next();
+});
+
 
 // MongoDB Connection with robust error handling
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://BY7:bahgat_88@qr-attendance.nphqruk.mongodb.net/qr-attendance?retryWrites=true&w=majority';
@@ -26,30 +41,36 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://BY7:bahgat_88@qr-a
 async function connectDB() {
   try {
     await mongoose.connect(MONGODB_URI, {
-      serverSelectionTimeoutMS: 5000,
+      serverSelectionTimeoutMS: 5000, // Shortened for quicker feedback on connection issues
       socketTimeoutMS: 30000,
-      connectTimeoutMS: 10000,
-      maxPoolSize: 10
+      connectTimeoutMS: 10000, // Default is 30000
+      maxPoolSize: 10 // Default is 100
     });
     console.log('✅ MongoDB Connected');
     
-    // Verify collections exist
     const db = mongoose.connection.db;
     const collections = await db.listCollections().toArray();
     const collectionNames = collections.map(c => c.name);
     
     if (!collectionNames.includes('members')) {
+      console.log('Collection "members" not found. Attempting to create...');
       await db.createCollection('members');
       console.log('✅ Created members collection');
     }
     
-    if (!collectionNames.includes('attendance')) {
-      await db.createCollection('attendance');
-      console.log('✅ Created attendance collection');
+    if (!collectionNames.includes('attendances')) { // Note: your screenshot shows 'attendance' (singular)
+      console.log('Collection "attendances" (plural) not found. Your screenshot shows "attendance" (singular). Please verify.');
+      // Assuming 'attendances' is what you intend based on schema naming. If it's 'attendance', adjust here and in schema.
+      if (!collectionNames.includes('attendance')) {
+         await db.createCollection('attendance'); // Changed to 'attendance' to match screenshot
+         console.log('✅ Created attendance collection (singular)');
+      }
     }
   } catch (err) {
     console.error('❌ MongoDB Connection Error:', err.message);
-    process.exit(1);
+    // More detailed error logging
+    if (err.reason) console.error('MongoDB Connection Error Reason:', err.reason);
+    process.exit(1); // Exit if DB connection fails
   }
 }
 
@@ -74,18 +95,21 @@ const memberSchema = new mongoose.Schema({
   }
 });
 
+// IMPORTANT: Your screenshot shows the collection as 'attendance' (singular).
+// Mongoose by default pluralizes model names for collections (e.g., 'Attendance' model -> 'attendances' collection).
+// To match your existing 'attendance' collection, explicitly set the collection name.
 const attendanceSchema = new mongoose.Schema({
   memberId: { 
     type: mongoose.Schema.Types.ObjectId, 
-    ref: 'Member',
+    ref: 'Member', // Refers to the 'Member' model
     required: true,
     index: true
   },
-  memberName: {
+  memberName: { // Denormalized for easier display
     type: String,
     required: true
   },
-  date: {
+  date: { // YYYY-MM-DD string
     type: String,
     required: true,
     index: true
@@ -94,39 +118,29 @@ const attendanceSchema = new mongoose.Schema({
     type: Date, 
     default: Date.now 
   }
-});
+}, { collection: 'attendance' }); // Explicitly set collection name to 'attendance' (singular)
+
 
 // Create indexes
 memberSchema.index({ qrCode: 1 });
-attendanceSchema.index({ memberId: 1, date: 1 });
+attendanceSchema.index({ memberId: 1, date: 1 }, { unique: true }); // Added unique constraint for a member per day
 
-const Member = mongoose.model('Member', memberSchema);
-const Attendance = mongoose.model('Attendance', attendanceSchema);
+const Member = mongoose.model('Member', memberSchema); // Collection will be 'members'
+const Attendance = mongoose.model('Attendance', attendanceSchema); // Collection will be 'attendance'
 
-// =============================================
-// NEW CODE: Automatic Test Data Initialization
-// =============================================
 async function initializeTestData() {
   try {
-    // 1. Ensure test member exists
     let testMember = await Member.findOne({ name: "Test Member" });
-    
     if (!testMember) {
-      testMember = new Member({
-        name: "Test Member",
-        qrCode: "test-qr-code-123" // Fixed QR code for testing
-      });
+      testMember = new Member({ name: "Test Member", qrCode: "test-qr-code-123" });
       await testMember.save();
-      console.log('✅ Created test member:', testMember);
+      console.log('✅ Created test member:', testMember.name, testMember.qrCode);
+    } else {
+      console.log('ℹ️ Test Member already exists.');
     }
 
-    // 2. Create today's attendance record if it doesn't exist
     const today = new Date().toISOString().split('T')[0];
-    const existingAttendance = await Attendance.findOne({
-      memberId: testMember._id,
-      date: today
-    });
-
+    const existingAttendance = await Attendance.findOne({ memberId: testMember._id, date: today });
     if (!existingAttendance) {
       const newAttendance = new Attendance({
         memberId: testMember._id,
@@ -134,170 +148,172 @@ async function initializeTestData() {
         date: today
       });
       await newAttendance.save();
-      console.log('✅ Created test attendance record:', newAttendance);
+      console.log('✅ Created test attendance record for Test Member for today.');
+    } else {
+      console.log('ℹ️ Test attendance for Test Member today already exists.');
     }
-
-    // 3. Verify data exists
-    const memberCount = await Member.countDocuments();
-    const attendanceCount = await Attendance.countDocuments();
-    console.log(`📊 Current stats: ${memberCount} members, ${attendanceCount} attendance records`);
-
   } catch (err) {
     console.error('❌ Test data initialization failed:', err.message);
+    if (err.code === 11000) {
+        console.error('❌ Attempted to insert duplicate data during test init.');
+    }
   }
 }
 
-// =============================================
-// Modified DB Connection Handler
-// =============================================
 async function initializeDatabase() {
   try {
     await connectDB();
-    await initializeTestData();
+    // Only run test data initialization if NOT in production, or based on a specific flag
+    if (process.env.NODE_ENV !== 'production') {
+        await initializeTestData();
+    }
   } catch (err) {
-    console.error('❌ Initialization failed:', err);
+    console.error('❌ Database Initialization failed:', err);
     process.exit(1);
   }
 }
 
-// Initialize database when starting
 initializeDatabase();
 
 // API Routes
 app.get('/', (req, res) => {
+  console.log(`[${new Date().toISOString()}] Root path / requested from ${req.ip}`);
   res.json({
     status: 'API is working',
+    message: 'Welcome to the QR Attendance Tracker API',
+    timestamp: new Date().toISOString(),
     endpoints: {
       register: 'POST /api/members',
       markAttendance: 'POST /api/attendance',
-      viewAttendance: 'GET /api/attendance/:date',
+      viewAttendanceByDate: 'GET /api/attendance/:date',
       listMembers: 'GET /api/members'
     }
   });
 });
 
-// Register new member
 app.post('/api/members', async (req, res) => {
   try {
     const { name } = req.body;
-    
-    if (!name || typeof name !== 'string') {
-      return res.status(400).json({ error: 'Valid name is required' });
+    if (!name || typeof name !== 'string' || name.trim() === '') {
+      return res.status(400).json({ error: 'Valid member name is required' });
     }
+    // Check if member with this name already exists (optional, depends on requirements)
+    // const existingMember = await Member.findOne({ name: name.trim() });
+    // if (existingMember) {
+    //   return res.status(409).json({ error: 'Member with this name already exists', member: existingMember });
+    // }
 
-    const member = new Member({ name }); // Let Mongoose generate the QR code
+    const member = new Member({ name: name.trim() }); // qrCode will be auto-generated
     await member.save();
-    
     res.status(201).json({
       _id: member._id,
       name: member.name,
-      qrCode: member.qrCode, // Use the one generated by Mongoose
+      qrCode: member.qrCode,
       createdAt: member.createdAt
     });
   } catch (err) {
     console.error('Member registration error:', err);
-    res.status(500).json({ 
-      error: err.code === 11000 ? 'Duplicate QR code' : 'Registration failed' 
-    });
+    if (err.code === 11000) { // Duplicate key error (likely qrCode, though default UUIDs make this rare)
+      return res.status(409).json({ error: 'A member with this QR code already exists. This is highly unlikely with UUIDs. Please try again.' });
+    }
+    res.status(500).json({ error: 'Member registration failed due to a server error' });
   }
 });
-// Mark attendance
+
 app.post('/api/attendance', async (req, res) => {
   try {
     const { qrCode } = req.body;
-    
     if (!qrCode) {
       return res.status(400).json({ error: 'QR code is required' });
     }
 
     const member = await Member.findOne({ qrCode });
     if (!member) {
-      return res.status(404).json({ error: 'Member not found' });
+      return res.status(404).json({ error: 'Member not found for the provided QR code' });
     }
 
-    const today = new Date().toISOString().split('T')[0];
-    const existing = await Attendance.findOne({ 
-      memberId: member._id, 
-      date: today 
-    });
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
 
-    if (existing) {
-      return res.status(200).json({ 
-        message: 'Attendance already marked today',
-        memberName: member.name
+    // Using findOneAndUpdate with upsert could also work here to simplify
+    const existingAttendance = await Attendance.findOne({ memberId: member._id, date: today });
+
+    if (existingAttendance) {
+      return res.status(200).json({ // 200 OK is fine, or 208 Already Reported
+        message: 'Attendance already marked for this member today',
+        memberName: member.name,
+        date: today,
+        attendanceId: existingAttendance._id
       });
     }
 
     const attendance = new Attendance({
       memberId: member._id,
-      memberName: member.name,
+      memberName: member.name, // Store member name for convenience
       date: today
     });
-    
     await attendance.save();
-    
     res.status(201).json({
-      message: 'Attendance recorded',
+      message: 'Attendance recorded successfully',
       memberName: member.name,
-      date: today
+      date: today,
+      attendanceId: attendance._id
     });
   } catch (err) {
-    console.error('Attendance error:', err);
-    res.status(500).json({ error: 'Failed to mark attendance' });
+    console.error('Mark attendance error:', err);
+     if (err.code === 11000) {
+      return res.status(409).json({ error: 'Attendance conflict. This member might have already been marked present simultaneously.' });
+    }
+    res.status(500).json({ error: 'Failed to mark attendance due to a server error' });
   }
 });
 
-// Get attendance by date
 app.get('/api/attendance/:date', async (req, res) => {
   try {
     const { date } = req.params;
-    const records = await Attendance.find({ date }).lean();
-    
+    // Validate date format (basic check)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ error: 'Invalid date format. Please use YYYY-MM-DD.' });
+    }
+    const records = await Attendance.find({ date }).populate('memberId', 'name').lean(); // Populate member name
     res.status(200).json(records);
   } catch (err) {
-    console.error('Attendance fetch error:', err);
-    res.status(500).json({ error: 'Failed to fetch attendance' });
+    console.error('Fetch attendance error:', err);
+    res.status(500).json({ error: 'Failed to fetch attendance records' });
   }
 });
 
-// Get all members
 app.get('/api/members', async (req, res) => {
   try {
-    const members = await Member.find()
-      .sort({ name: 1 })
-      .select('name qrCode createdAt')
-      .lean();
-    
+    const members = await Member.find().sort({ name: 1 }).select('_id name qrCode createdAt').lean();
     res.status(200).json(members);
   } catch (err) {
-    console.error('Members fetch error:', err);
-    res.status(500).json({ error: 'Failed to fetch members' });
+    console.error('Fetch members error:', err);
+    res.status(500).json({ error: 'Failed to fetch members list' });
   }
 });
 
-// Error handling middleware
+// Global error handling middleware (should be last)
 app.use((err, req, res, next) => {
-  console.error('Server error:', err);
-  res.status(500).json({ error: 'Internal server error' });
+  console.error('Unhandled Server Error:', err.stack || err);
+  res.status(500).json({ error: 'An unexpected internal server error occurred.' });
 });
+
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🔗 CORS-enabled for: 
-  - https://bahgat9.github.io
-  - https://qr-attendance-8x8iqvpdq-bahgats-projects-6796583a.vercel.app`);
-});
+// Vercel handles the listening part, so app.listen is mainly for local dev.
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(PORT, () => {
+      console.log(`🚀 Server running locally on port ${PORT}`);
+      console.log(`🔗 Frontend should connect to http://localhost:${PORT}`);
+    });
+}
 
 // Enhanced DB connection monitoring
-mongoose.connection.on('connected', () => {
-  console.log('🔗 MongoDB connection established');
-});
+mongoose.connection.on('connected', () => console.log('🔗 MongoDB re-established connection'));
+mongoose.connection.on('error', (err) => console.error('❌ MongoDB runtime connection error:', err));
+mongoose.connection.on('disconnected', () => console.warn('⚠️ MongoDB connection disconnected'));
+mongoose.connection.on('reconnected', () => console.info('ℹ️ MongoDB reconnected'));
+mongoose.connection.on('close', () => console.info('ℹ️ MongoDB connection closed'));
 
-mongoose.connection.on('error', (err) => {
-  console.error('❌ MongoDB connection error:', err);
-});
 
-mongoose.connection.on('disconnected', () => {
-  console.warn('⚠️ MongoDB connection disconnected');
-});
+module.exports = app; // Export app for Vercel
