@@ -36,7 +36,7 @@ const corsOptions = {
   credentials: true,
   optionsSuccessStatus: 204 // For legacy browser compatibility, and standard for OPTIONS
 };
-app.options('*', cors()); // Handle preflight requests
+// Handle preflight requests
 
 // Apply CORS middleware globally
 app.use(cors({
@@ -56,7 +56,7 @@ app.use(cors({
   allowedHeaders: ['Content-Type'],
   credentials: true
 }));
-
+app.options('*', cors()); 
 // --- END CORS Configuration ---
 
 
