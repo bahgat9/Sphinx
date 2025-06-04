@@ -22,24 +22,24 @@
     }
   ],
   "headers": [
-    {
-      "source": "/api/(.*)",
-      "headers": [
-        {
-          "key": "Access-Control-Allow-Origin",
-          "value": "https://bahgat9.github.io"
-        },
-        {
-          "key": "Access-Control-Allow-Methods",
-          "value": "GET,POST,PUT,PATCH,DELETE,OPTIONS"
-        },
-        {
-          "key": "Access-Control-Allow-Headers",
-          "value": "Content-Type"
-        }
-      ]
-    }
-  ],
+  {
+    "source": "/api/(.*)",
+    "headers": [
+      {
+        "key": "Access-Control-Allow-Origin",
+        "value": "https://bahgat9.github.io"
+      },
+      {
+        "key": "Access-Control-Allow-Methods",
+        "value": "GET,POST,OPTIONS"
+      },
+      {
+        "key": "Access-Control-Allow-Headers",
+        "value": "Content-Type"
+      }
+    ]
+  }
+],
   "env": {
     "NODE_ENV": "production",
     "MONGODB_URI": "mongodb+srv://BY7:bahgat_88@qr-attendance.nphqruk.mongodb.net/qr-attendance?retryWrites=true&w=majority"
