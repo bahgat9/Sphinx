@@ -15,8 +15,8 @@ const app = express();
 // This needs to be one of the VERY FIRST middleware.
 const allowedOrigins = [
   'https://bahgat9.github.io',
-  'https://qr-attendance-8x8iqvpdq-bahgats-projects-6796583a.vercel.app', // Your Vercel app
-  'http://localhost:3000' // For local development
+  'https://qr-attendance-8x8iqvpdq-bahgats-projects-6796583a.vercel.app',
+  'http://localhost:3000'
 ];
 
 const corsOptions = {
@@ -40,23 +40,17 @@ const corsOptions = {
 
 // Apply CORS middleware globally
 app.use(cors({
-  origin: (origin, callback) => {
-    const allowedOrigins = [
-      'https://bahgat9.github.io',
-      'https://qr-attendance-8x8iqvpdq-bahgats-projects-6796583a.vercel.app',
-      'http://localhost:3000'
-    ];
+  origin: function (origin, callback) {
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      callback(new Error('CORS not allowed'));
     }
   },
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type'],
-  credentials: true
+  allowedHeaders: ['Content-Type']
 }));
-app.options('*', cors()); 
+app.options('*', cors());
 // --- END CORS Configuration ---
 
 
