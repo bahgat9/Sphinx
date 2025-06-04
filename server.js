@@ -36,10 +36,27 @@ const corsOptions = {
   credentials: true,
   optionsSuccessStatus: 204 // For legacy browser compatibility, and standard for OPTIONS
 };
+app.options('*', cors()); // Handle preflight requests
 
 // Apply CORS middleware globally
-app.use(cors(corsOptions));
-console.log('CORS middleware configured and applied.');
+app.use(cors({
+  origin: (origin, callback) => {
+    const allowedOrigins = [
+      'https://bahgat9.github.io',
+      'https://qr-attendance-8x8iqvpdq-bahgats-projects-6796583a.vercel.app',
+      'http://localhost:3000'
+    ];
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type'],
+  credentials: true
+}));
+
 // --- END CORS Configuration ---
 
 
