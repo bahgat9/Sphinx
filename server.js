@@ -52,7 +52,6 @@ async function connectDB() {
     process.exit(1);
   }
 }
-connectDB();
 
 // Database Schemas
 const memberSchema = new mongoose.Schema({
@@ -103,6 +102,66 @@ attendanceSchema.index({ memberId: 1, date: 1 });
 
 const Member = mongoose.model('Member', memberSchema);
 const Attendance = mongoose.model('Attendance', attendanceSchema);
+
+// =============================================
+// NEW CODE: Automatic Test Data Initialization
+// =============================================
+async function initializeTestData() {
+  try {
+    // 1. Ensure test member exists
+    let testMember = await Member.findOne({ name: "Test Member" });
+    
+    if (!testMember) {
+      testMember = new Member({
+        name: "Test Member",
+        qrCode: "test-qr-code-123" // Fixed QR code for testing
+      });
+      await testMember.save();
+      console.log('✅ Created test member:', testMember);
+    }
+
+    // 2. Create today's attendance record if it doesn't exist
+    const today = new Date().toISOString().split('T')[0];
+    const existingAttendance = await Attendance.findOne({
+      memberId: testMember._id,
+      date: today
+    });
+
+    if (!existingAttendance) {
+      const newAttendance = new Attendance({
+        memberId: testMember._id,
+        memberName: testMember.name,
+        date: today
+      });
+      await newAttendance.save();
+      console.log('✅ Created test attendance record:', newAttendance);
+    }
+
+    // 3. Verify data exists
+    const memberCount = await Member.countDocuments();
+    const attendanceCount = await Attendance.countDocuments();
+    console.log(`📊 Current stats: ${memberCount} members, ${attendanceCount} attendance records`);
+
+  } catch (err) {
+    console.error('❌ Test data initialization failed:', err.message);
+  }
+}
+
+// =============================================
+// Modified DB Connection Handler
+// =============================================
+async function initializeDatabase() {
+  try {
+    await connectDB();
+    await initializeTestData();
+  } catch (err) {
+    console.error('❌ Initialization failed:', err);
+    process.exit(1);
+  }
+}
+
+// Initialize database when starting
+initializeDatabase();
 
 // API Routes
 app.get('/', (req, res) => {
@@ -229,4 +288,17 @@ app.listen(PORT, () => {
   console.log(`🔗 CORS-enabled for: 
   - https://bahgat9.github.io
   - https://qr-attendance-8x8iqvpdq-bahgats-projects-6796583a.vercel.app`);
+});
+
+// Enhanced DB connection monitoring
+mongoose.connection.on('connected', () => {
+  console.log('🔗 MongoDB connection established');
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('❌ MongoDB connection error:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('⚠️ MongoDB connection disconnected');
 });
