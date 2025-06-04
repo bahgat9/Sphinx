@@ -4,35 +4,17 @@
     {
       "src": "server.js",
       "use": "@vercel/node",
-      "config": { "includeFiles": ["**/*.js", "**/*.json"] }
+      "config": {
+        "includeFiles": ["**/*.js", "**/*.json"]
+      }
     }
   ],
   "routes": [
-    
     {
       "src": "/api/(.*)",
-      "methods": ["OPTIONS"],
-      "headers": {
-        "Access-Control-Allow-Origin": "https://bahgat9.github.io",
-        "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,PATCH,OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
-        "Access-Control-Allow-Credentials": "true",
-        "Access-Control-Max-Age": "86400"
-      },
-      "dest": "/dev/null", 
-      "status": 204 
+      "dest": "server.js",
+      "methods": ["GET", "POST", "OPTIONS"]
     },
-    
-    {
-      "src": "/api/(.*)",
-      "headers": {
-        "Access-Control-Allow-Origin": "https://bahgat9.github.io",
-        "Access-Control-Allow-Credentials": "true"
-      },
-      "dest": "server.js"
-      
-    },
-    
     {
       "src": "/",
       "dest": "server.js",
