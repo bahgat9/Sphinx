@@ -5,7 +5,7 @@
       "src": "server.js",
       "use": "@vercel/node",
       "config": {
-        "includeFiles": ["**/*.js", "**/*.json", ".env"]
+        "includeFiles": ["**/*.js", "**/*.json", "db.json"]
       }
     }
   ],
@@ -13,35 +13,44 @@
     {
       "src": "/api/(.*)",
       "dest": "server.js",
-      "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+      "methods": ["GET", "POST", "OPTIONS"]
     },
     {
       "src": "/",
       "dest": "server.js",
-      "methods": ["GET", "OPTIONS"]
+      "methods": ["GET"]
     }
   ],
-  "headers": [
-  {
-    "source": "/api/(.*)",
-    "headers": [
-      {
-        "key": "Access-Control-Allow-Origin",
-        "value": "https://bahgat9.github.io"
-      },
-      {
-        "key": "Access-Control-Allow-Methods",
-        "value": "GET,POST,OPTIONS"
-      },
-      {
-        "key": "Access-Control-Allow-Headers",
-        "value": "Content-Type"
-      }
-    ]
-  }
-],
   "env": {
-    "NODE_ENV": "production",
-    "MONGODB_URI": "mongodb+srv://BY7:bahgat_88@qr-attendance.nphqruk.mongodb.net/qr-attendance?retryWrites=true&w=majority"
-  }
+    "NODE_ENV": "production"
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "https://bahgat9.github.io"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET,POST,OPTIONS"
+        },
+        {
+          "key": "Access-Control-Allow-Headers",
+          "value": "Content-Type"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/"
+    },
+    {
+      "source": "/api",
+      "destination": "/api"
+    }
+  ]
 }
