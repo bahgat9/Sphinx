@@ -159,40 +159,119 @@
                     </div>
                 </div>
             </div>
+
+            <div class="mt-8 border-t pt-4">
+                <h3 class="text-lg font-medium text-gray-700">Data Management</h3>
+                <div class="mt-2 space-y-2">
+                    <button id="exportDataBtn" class="w-full bg-yellow-500 hover:bg-yellow-600 text-white py-2 px-4 rounded-md">
+                        Export All Data
+                    </button>
+                    <button id="importDataBtn" class="w-full bg-purple-500 hover:bg-purple-600 text-white py-2 px-4 rounded-md">
+                        Import Data
+                    </button>
+                    <input type="file" id="importFileInput" class="hidden" accept=".json">
+                    <button id="clearDataBtn" class="w-full bg-red-500 hover:bg-red-600 text-white py-2 px-4 rounded-md">
+                        Clear All Data
+                    </button>
+                </div>
+                <div id="dataOutput" class="mt-2 p-2 bg-gray-100 rounded-md hidden"></div>
+            </div>
         </main>
     </div>
 
     <div id="toast" class="toast"></div>
 
     <script>
-        // Client-side storage for GitHub Pages deployment
+        // Enhanced Local Database with Backup/Restore
         class LocalDatabase {
             constructor() {
                 this.db = {
                     members: [],
-                    attendance: []
+                    attendance: [],
+                    version: 2,
+                    settings: {
+                        lastUsed: new Date().toISOString()
+                    }
                 };
                 this.loadFromLocalStorage();
+                this.initializeTestData();
             }
             
             loadFromLocalStorage() {
-                const savedData = localStorage.getItem('qrAttendanceDB');
-                if (savedData) {
-                    this.db = JSON.parse(savedData);
+                try {
+                    const savedData = localStorage.getItem('qrAttendanceDB');
+                    if (savedData) {
+                        const parsed = JSON.parse(savedData);
+                        // Data migration from version 1 to 2
+                        if (parsed.version === 1) {
+                            parsed.version = 2;
+                            parsed.settings = { lastUsed: new Date().toISOString() };
+                        }
+                        this.db = parsed;
+                    }
+                } catch (e) {
+                    console.error("Failed to load data:", e);
                 }
             }
             
             saveToLocalStorage() {
-                localStorage.setItem('qrAttendanceDB', JSON.stringify(this.db));
+                try {
+                    this.db.settings.lastUsed = new Date().toISOString();
+                    localStorage.setItem('qrAttendanceDB', JSON.stringify(this.db));
+                } catch (e) {
+                    console.error("Failed to save data:", e);
+                }
+            }
+            
+            exportData() {
+                return JSON.stringify(this.db, null, 2);
+            }
+            
+            importData(jsonString) {
+                try {
+                    const newData = JSON.parse(jsonString);
+                    if (newData.members && newData.attendance) {
+                        // Validate and merge data
+                        this.db.members = [...new Set([...this.db.members, ...newData.members])];
+                        this.db.attendance = [...new Set([...this.db.attendance, ...newData.attendance])];
+                        this.saveToLocalStorage();
+                        return true;
+                    }
+                    return false;
+                } catch (e) {
+                    console.error("Invalid data format:", e);
+                    return false;
+                }
+            }
+            
+            initializeTestData() {
+                if (this.db.members.length === 0) {
+                    this.addMember("Test Member");
+                    // Mark test member as present today
+                    const testMember = this.db.members.find(m => m.name === "Test Member");
+                    if (testMember) {
+                        this.markAttendance(testMember.qrCode);
+                    }
+                }
             }
             
             async addMember(name) {
+                if (!name || typeof name !== 'string') {
+                    throw new Error('Invalid name');
+                }
+                
+                const existing = this.db.members.find(m => m.name.toLowerCase() === name.toLowerCase());
+                if (existing) {
+                    throw new Error('Member already exists');
+                }
+                
                 const newMember = {
                     _id: crypto.randomUUID(),
                     name,
                     qrCode: crypto.randomUUID(),
                     createdAt: new Date().toISOString()
                 };
+                
                 this.db.members.push(newMember);
                 this.saveToLocalStorage();
                 return newMember;
@@ -241,6 +320,18 @@
             async getAllMembers() {
                 return this.db.members.sort((a, b) => a.name.localeCompare(b.name));
             }
+            
+            async clearAllData() {
+                this.db = {
+                    members: [],
+                    attendance: [],
+                    version: 2,
+                    settings: {
+                        lastUsed: new Date().toISOString()
+                    }
+                };
+                this.saveToLocalStorage();
+            }
         }
 
         // Initialize database
@@ -268,7 +359,14 @@
         const historicalAttendanceListEl = document.getElementById('historicalAttendanceList');
         const toastEl = document.getElementById('toast');
         const loadingEl = document.getElementById('loading');
+        const exportDataBtn = document.getElementById('exportDataBtn');
+        const importDataBtn = document.getElementById('importDataBtn');
+        const importFileInput = document.getElementById('importFileInput');
+        const clearDataBtn = document.getElementById('clearDataBtn');
+        const dataOutput = document.getElementById('dataOutput');
+
         let html5QrCode = null;
+        let isScanning = false;
 
         // Show loading spinner
         function showLoading() {
@@ -347,7 +445,7 @@
                 showToast("Member registered successfully!", "success");
             } catch (error) {
                 console.error("Registration error:", error);
-                showToast("Registration failed. Check console for details.", "error");
+                showToast(error.message || "Registration failed", "error");
             } finally {
                 registerButton.disabled = false;
                 registerButton.textContent = "Register & Generate QR";
@@ -359,68 +457,90 @@
 
         // QR Code Scanning
         function onScanSuccess(decodedText, decodedResult) {
-            scanResultP.textContent = `Scanned Member ID: ${decodedText}`;
+            if (!isScanning) return;
+            
+            // Play beep sound
+            try {
+                const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-alarm-digital-clock-beep-989.mp3');
+                audio.play().catch(e => console.log('Audio play failed:', e));
+            } catch (e) {
+                console.log('Audio error:', e);
+            }
+            
+            scanResultP.textContent = `Scanned: ${decodedText}`;
+            scanResultP.style.color = "green";
+            stopScanning();
             markAttendance(decodedText);
         }
 
         function onScanFailure(error) {
-            console.warn(`QR error = ${error}`);
+            if (error && !error.message.includes('NotFoundException')) {
+                console.warn('Scan error:', error);
+                scanResultP.textContent = `Scan error: ${error.message || error}`;
+                scanResultP.style.color = "red";
+            }
         }
-        
+
+        async function startScanning() {
+            if (isScanning) return;
+            
+            try {
+                html5QrCode = new Html5Qrcode("reader");
+                const config = { 
+                    fps: 10, 
+                    qrbox: { width: 250, height: 250 },
+                    formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE]
+                };
+                
+                const cameras = await Html5Qrcode.getCameras();
+                if (cameras.length === 0) {
+                    throw new Error('No cameras found');
+                }
+                
+                // Prefer rear camera if available
+                const cameraId = cameras.find(c => c.label.includes('back'))?.id || cameras[0].id;
+                
+                await html5QrCode.start(
+                    cameraId,
+                    config,
+                    onScanSuccess,
+                    onScanFailure
+                );
+                
+                isScanning = true;
+                updateScanButtons(true);
+                scanResultP.textContent = "Scanner started. Point camera at QR code.";
+                scanResultP.style.color = "green";
+            } catch (err) {
+                console.error("Scanner error:", err);
+                scanResultP.textContent = `Error: ${err.message}`;
+                scanResultP.style.color = "red";
+                isScanning = false;
+                updateScanButtons(false);
+            }
+        }
+
+        function stopScanning() {
+            if (!html5QrCode || !isScanning) return;
+            
+            html5QrCode.stop().then(() => {
+                isScanning = false;
+                updateScanButtons(false);
+                scanResultP.textContent = "Scanner stopped";
+                scanResultP.style.color = "gray";
+            }).catch(err => {
+                console.error("Error stopping scanner:", err);
+            });
+        }
+
         function updateScanButtons(isScanning) {
             startScanButton.classList.toggle('hidden', isScanning);
             stopScanButton.classList.toggle('hidden', !isScanning);
             readerDiv.style.borderColor = isScanning ? '#34D399' : '#e5e7eb';
         }
 
-        startScanButton.addEventListener('click', () => {
-            if (!html5QrCode) {
-                html5QrCode = new Html5Qrcode("reader");
-            }
-
-            scanResultP.textContent = "Starting scanner...";
-            const config = { fps: 10, qrbox: { width: 250, height: 250 } };
-            
-            Html5Qrcode.getCameras().then(cameras => {
-                if (cameras && cameras.length) {
-                    html5QrCode.start(
-                        { facingMode: "environment" },
-                        config,
-                        onScanSuccess,
-                        onScanFailure
-                    ).then(() => {
-                        updateScanButtons(true);
-                        scanResultP.textContent = "Scanner started. Point camera at QR code.";
-                    }).catch(err => {
-                        console.error("Error starting scanner:", err);
-                        scanResultP.textContent = `Error starting scanner: ${err.message}`;
-                        showToast(`Scanner Error: ${err.message}`, "error");
-                        updateScanButtons(false);
-                    });
-                } else {
-                    scanResultP.textContent = "No cameras found on this device.";
-                    showToast("No cameras found.", "error");
-                }
-            }).catch(err => {
-                scanResultP.textContent = `Camera permission error: ${err.message}`;
-                showToast("Camera permission denied.", "error");
-            });
-        });
-
-        stopScanButton.addEventListener('click', () => {
-            if (html5QrCode && html5QrCode.isScanning) {
-                html5QrCode.stop()
-                    .then(() => {
-                        updateScanButtons(false);
-                        scanResultP.textContent = "Scanner stopped.";
-                        showToast("Scanner stopped.", "success");
-                    })
-                    .catch(err => {
-                        console.error("Error stopping scanner:", err);
-                        showToast("Error stopping scanner.", "error");
-                    });
-            }
-        });
+        startScanButton.addEventListener('click', startScanning);
+        stopScanButton.addEventListener('click', stopScanning);
         
         // Attendance Logic
         async function markAttendance(qrCode) {
@@ -440,6 +560,7 @@
             } catch (error) {
                 console.error("Attendance error:", error);
                 scanResultP.textContent = `Error: ${error.message}`;
+                scanResultP.style.color = "red";
                 showToast(error.message, "error");
             } finally {
                 hideLoading();
@@ -506,6 +627,58 @@
                 return;
             }
             await fetchAndDisplayAttendance(selectedDate, historicalAttendanceListEl);
+        });
+
+        // Data Management Functions
+        exportDataBtn.addEventListener('click', () => {
+            const data = db.exportData();
+            dataOutput.textContent = data;
+            dataOutput.classList.remove('hidden');
+            
+            // Create download link
+            const blob = new Blob([data], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `qr-attendance-${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            showToast('Data exported successfully', 'success');
+        });
+
+        importDataBtn.addEventListener('click', () => {
+            importFileInput.click();
+        });
+
+        importFileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const success = db.importData(event.target.result);
+                if (success) {
+                    showToast('Data imported successfully!', 'success');
+                    loadTodaysAttendance(); // Refresh UI
+                } else {
+                    showToast('Invalid data format', 'error');
+                }
+                e.target.value = ''; // Reset file input
+            };
+            reader.readAsText(file);
+        });
+
+        clearDataBtn.addEventListener('click', () => {
+            if (confirm('Are you sure you want to delete ALL data? This cannot be undone!')) {
+                db.clearAllData();
+                showToast('All data cleared', 'success');
+                setTimeout(() => {
+                    window.location.reload(); // Refresh to initialize new DB
+                }, 1000);
+            }
         });
 
         // Modal Close Handler
