@@ -90,7 +90,7 @@
     <div id="loading" class="fixed inset-0 bg-white z-50 flex items-center justify-center hidden">
         <div class="text-center">
             <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mx-auto"></div>
-            <p class="mt-4 text-gray-600">Connecting to database...</p>
+            <p class="mt-4 text-gray-600">Loading...</p>
         </div>
     </div>
 
@@ -165,55 +165,86 @@
     <div id="toast" class="toast"></div>
 
     <script>
-        // Server URL - Replace with your actual backend URL
-        const SERVER_URL = "https://qr-attendance-8x8iqvpdq-bahgats-projects-6796583a.vercel.app"; // Ensure this is correct
-
-        // Enhanced fetch with error handling
-        async function safeFetch(url, options = {}) {
-            let response; // Declare response outside try to log it in catch
-            try {
-                response = await fetch(url, {
-                    ...options,
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...options.headers
-                    }
-                });
-
-                if (!response.ok) { // e.g., 404, 500
-                    let errorData;
-                    let errorTextMessage = `Request failed with status ${response.status}`;
-                    try {
-                        errorData = await response.json(); // Try to parse as JSON
-                        if (errorData && errorData.error) {
-                           errorTextMessage = errorData.error;
-                        }
-                    } catch (e) {
-                        // If not JSON, maybe it's text or an HTML error page from Vercel
-                        const errorText = await response.text();
-                        console.error("Non-JSON error response details:", {status: response.status, statusText: response.statusText, body: errorText});
-                        errorTextMessage = `Server returned ${response.status}: ${response.statusText}. Preview: ${errorText.substring(0,100)}...`;
-                    }
-                    throw new Error(errorTextMessage);
+        // Client-side storage for GitHub Pages deployment
+        class LocalDatabase {
+            constructor() {
+                this.db = {
+                    members: [],
+                    attendance: []
+                };
+                this.loadFromLocalStorage();
+            }
+            
+            loadFromLocalStorage() {
+                const savedData = localStorage.getItem('qrAttendanceDB');
+                if (savedData) {
+                    this.db = JSON.parse(savedData);
                 }
-
-                try {
-                    return await response.json();
-                } catch (e) {
-                    // This case is less common for typical APIs but good for robustness
-                    const responseText = await response.text(); // Try to get text if JSON parsing fails on success
-                    console.error("Failed to parse successful JSON response. Status:", response.status, "Body:", responseText);
-                    throw new Error(`Successfully fetched but failed to parse JSON response. Content: ${responseText.substring(0,100)}...`);
+            }
+            
+            saveToLocalStorage() {
+                localStorage.setItem('qrAttendanceDB', JSON.stringify(this.db));
+            }
+            
+            async addMember(name) {
+                const newMember = {
+                    _id: crypto.randomUUID(),
+                    name,
+                    qrCode: crypto.randomUUID(),
+                    createdAt: new Date().toISOString()
+                };
+                this.db.members.push(newMember);
+                this.saveToLocalStorage();
+                return newMember;
+            }
+            
+            async markAttendance(qrCode) {
+                const member = this.db.members.find(m => m.qrCode === qrCode);
+                if (!member) {
+                    throw new Error('Member not found');
                 }
-            } catch (error) {
-                console.error(`API Error during fetch to (${url}):`, error);
-                if(response) {
-                    console.error('Full response object (if available):', response);
+                
+                const today = new Date().toISOString().split('T')[0];
+                const existing = this.db.attendance.find(a => 
+                    a.memberId === member._id && a.date === today
+                );
+                
+                if (existing) {
+                    return {
+                        message: 'Attendance already marked today',
+                        memberName: member.name
+                    };
                 }
-                showToast(error.message || 'Network error or unknown issue', 'error');
-                throw error; // Re-throw for calling function to handle if needed
+                
+                const newAttendance = {
+                    _id: crypto.randomUUID(),
+                    memberId: member._id,
+                    memberName: member.name,
+                    date: today,
+                    timestamp: new Date().toISOString()
+                };
+                
+                this.db.attendance.push(newAttendance);
+                this.saveToLocalStorage();
+                
+                return {
+                    message: 'Attendance recorded',
+                    memberName: member.name,
+                    date: today
+                };
+            }
+            
+            async getAttendanceByDate(date) {
+                return this.db.attendance.filter(a => a.date === date);
+            }
+            
+            async getAllMembers() {
+                return this.db.members.sort((a, b) => a.name.localeCompare(b.name));
             }
         }
+
+        // Initialize database
+        const db = new LocalDatabase();
 
         // UI Elements
         const tabs = document.querySelectorAll('.tab-button');
@@ -239,29 +270,41 @@
         const loadingEl = document.getElementById('loading');
         let html5QrCode = null;
 
-        function showLoading() { loadingEl.classList.remove('hidden'); }
-        function hideLoading() { loadingEl.classList.add('hidden'); }
+        // Show loading spinner
+        function showLoading() {
+            loadingEl.classList.remove('hidden');
+        }
 
+        // Hide loading spinner
+        function hideLoading() {
+            loadingEl.classList.add('hidden');
+        }
+
+        // Toast Notification
         function showToast(message, type = 'success', duration = 3000) {
             toastEl.textContent = message;
             toastEl.className = `toast ${type} show`;
-            setTimeout(() => { toastEl.className = 'toast'; }, duration);
+            setTimeout(() => {
+                toastEl.className = 'toast';
+            }, duration);
         }
 
+        // Tab Navigation
         tabs.forEach(tab => {
             tab.addEventListener('click', () => {
                 tabs.forEach(t => t.classList.remove('active'));
                 tab.classList.add('active');
                 const targetTab = tab.dataset.tab;
                 tabContents.forEach(content => {
-                    content.classList.toggle('hidden', content.id !== `${targetTab}Tab`);
+                    if (content.id === `${targetTab}Tab`) {
+                        content.classList.remove('hidden');
+                        if (targetTab === 'view') {
+                            loadTodaysAttendance();
+                        }
+                    } else {
+                        content.classList.add('hidden');
+                    }
                 });
-                if (targetTab === 'view' && document.getElementById('todaySubTab').classList.contains('active')) {
-                    loadTodaysAttendance();
-                } else if (targetTab === 'scan' && html5QrCode && html5QrCode.isScanning) {
-                    // Optional: auto-stop scanner if navigating away from scan tab
-                    // stopScanner(); 
-                }
             });
         });
 
@@ -277,6 +320,7 @@
             });
         });
 
+        // Member Registration
         async function registerMember() {
             const name = memberNameInput.value.trim();
             if (!name) return showToast("Please enter a name", "error");
@@ -286,15 +330,12 @@
             showLoading();
 
             try {
-                const data = await safeFetch(`${SERVER_URL}/api/members`, {
-                    method: 'POST',
-                    body: JSON.stringify({ name }) // Only send name
-                });
-
-                modalMemberName.textContent = `Name: ${data.name}`; // Use name from response
+                const data = await db.addMember(name);
+                
+                modalMemberName.textContent = `Name: ${name}`;
                 qrCodeContainer.innerHTML = '';
                 new QRCode(qrCodeContainer, {
-                    text: data.qrCode, // Use qrCode from response
+                    text: data.qrCode,
                     width: 200,
                     height: 200,
                     colorDark: "#000000",
@@ -305,74 +346,45 @@
                 memberNameInput.value = '';
                 showToast("Member registered successfully!", "success");
             } catch (error) {
-                // Error already shown by safeFetch's toast
                 console.error("Registration error:", error);
+                showToast("Registration failed. Check console for details.", "error");
             } finally {
                 registerButton.disabled = false;
                 registerButton.textContent = "Register & Generate QR";
                 hideLoading();
             }
         }
+
         registerButton.addEventListener('click', registerMember);
 
+        // QR Code Scanning
         function onScanSuccess(decodedText, decodedResult) {
             scanResultP.textContent = `Scanned Member ID: ${decodedText}`;
             markAttendance(decodedText);
-            // Optional: Stop scanner after a successful scan
-            // if (html5QrCode && html5QrCode.isScanning) {
-            //    stopScanner();
-            //    showToast("Scan successful, camera stopped.", "success");
-            // }
         }
 
         function onScanFailure(error) {
-            // This is called frequently, so avoid noisy logs unless debugging.
-            // console.warn(`QR scan error = ${error}`);
-            // scanResultP.textContent = `Scan Error: ${error}. Try repositioning.`;
+            console.warn(`QR error = ${error}`);
         }
-
+        
         function updateScanButtons(isScanning) {
             startScanButton.classList.toggle('hidden', isScanning);
             stopScanButton.classList.toggle('hidden', !isScanning);
             readerDiv.style.borderColor = isScanning ? '#34D399' : '#e5e7eb';
         }
 
-        function stopScanner() { // Helper function to stop scanner
-             if (html5QrCode && html5QrCode.isScanning) {
-                return html5QrCode.stop()
-                    .then(() => {
-                        updateScanButtons(false);
-                        scanResultP.textContent = "Scanner stopped.";
-                        // showToast("Scanner stopped.", "success"); // Toast can be optional here
-                    })
-                    .catch(err => {
-                        console.error("Error stopping scanner:", err);
-                        showToast("Error stopping scanner.", "error");
-                        updateScanButtons(true); // Revert button state if stop failed
-                    });
-            }
-            return Promise.resolve();
-        }
-
-
         startScanButton.addEventListener('click', () => {
             if (!html5QrCode) {
                 html5QrCode = new Html5Qrcode("reader");
             }
-            if (html5QrCode.isScanning) {
-                 showToast("Scanner is already running.", "error");
-                 return;
-            }
 
-            scanResultP.textContent = "Initializing camera...";
-            const config = { fps: 10, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 };
-
+            scanResultP.textContent = "Starting scanner...";
+            const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+            
             Html5Qrcode.getCameras().then(cameras => {
                 if (cameras && cameras.length) {
-                    const cameraId = cameras.find(camera => camera.label.toLowerCase().includes('back'))?.id || cameras[0].id;
                     html5QrCode.start(
-                        // { facingMode: "environment" }, // Prefer specific camera ID if available
-                        cameraId,
+                        { facingMode: "environment" },
                         config,
                         onScanSuccess,
                         onScanFailure
@@ -381,8 +393,8 @@
                         scanResultP.textContent = "Scanner started. Point camera at QR code.";
                     }).catch(err => {
                         console.error("Error starting scanner:", err);
-                        scanResultP.textContent = `Error starting scanner: ${err.message || err}`;
-                        showToast(`Scanner Error: ${err.message || err}`, "error");
+                        scanResultP.textContent = `Error starting scanner: ${err.message}`;
+                        showToast(`Scanner Error: ${err.message}`, "error");
                         updateScanButtons(false);
                     });
                 } else {
@@ -390,98 +402,98 @@
                     showToast("No cameras found.", "error");
                 }
             }).catch(err => {
-                scanResultP.textContent = `Camera permission error: ${err.message || err}`;
-                showToast(`Camera error: ${err.message || err}`, "error");
-                updateScanButtons(false);
+                scanResultP.textContent = `Camera permission error: ${err.message}`;
+                showToast("Camera permission denied.", "error");
             });
         });
 
         stopScanButton.addEventListener('click', () => {
-            stopScanner().then(() => {
-                 showToast("Scanner stopped manually.", "success");
-            });
+            if (html5QrCode && html5QrCode.isScanning) {
+                html5QrCode.stop()
+                    .then(() => {
+                        updateScanButtons(false);
+                        scanResultP.textContent = "Scanner stopped.";
+                        showToast("Scanner stopped.", "success");
+                    })
+                    .catch(err => {
+                        console.error("Error stopping scanner:", err);
+                        showToast("Error stopping scanner.", "error");
+                    });
+            }
         });
-
+        
+        // Attendance Logic
         async function markAttendance(qrCode) {
-            scanResultP.textContent = `Processing attendance for ${qrCode.substring(0,15)}...`; // Truncate long QR codes
+            scanResultP.textContent = `Processing attendance for ${qrCode}...`;
             showLoading();
+
             try {
-                const result = await safeFetch(`${SERVER_URL}/api/attendance`, {
-                    method: 'POST',
-                    body: JSON.stringify({ qrCode })
-                });
+                const result = await db.markAttendance(qrCode);
+                
                 showToast(`${result.memberName} marked present!`, "success");
-                scanResultP.textContent = `${result.memberName} marked present for ${result.date}.`;
-                if (document.getElementById('viewTab').classList.contains('active') &&
+                scanResultP.textContent = `${result.memberName} marked present.`;
+                
+                if (document.getElementById('viewTab').classList.contains('active') && 
                     document.getElementById('todaySubTab').classList.contains('active')) {
                     loadTodaysAttendance();
                 }
             } catch (error) {
-                // Error already shown by safeFetch
-                 scanResultP.textContent = `Attendance Error: ${error.message}`;
+                console.error("Attendance error:", error);
+                scanResultP.textContent = `Error: ${error.message}`;
+                showToast(error.message, "error");
             } finally {
                 hideLoading();
             }
         }
 
         function formatDate(dateObj) {
-            return dateObj.toISOString().split('T')[0];
-        }
-
-        function displayFriendlyDate(dateString) {
-            try {
-                const date = new Date(dateString + 'T00:00:00'); // Ensure local interpretation
-                return date.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-            } catch (e) {
-                return dateString; // Fallback
-            }
+            const year = dateObj.getFullYear();
+            const month = (dateObj.getMonth() + 1).toString().padStart(2, '0');
+            const day = dateObj.getDate().toString().padStart(2, '0');
+            return `${year}-${month}-${day}`;
         }
         
+        function displayFriendlyDate(dateString) {
+            const date = new Date(dateString + 'T00:00:00');
+            return date.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        }
+
         async function loadTodaysAttendance() {
             const todayStr = formatDate(new Date());
             todayDateEl.textContent = `Today: ${displayFriendlyDate(todayStr)}`;
             await fetchAndDisplayAttendance(todayStr, todayAttendanceListEl);
         }
-
+        
         async function fetchAndDisplayAttendance(dateString, displayElement) {
             displayElement.innerHTML = `<p class="text-gray-500 text-sm py-2">Loading attendance for ${displayFriendlyDate(dateString)}...</p>`;
             showLoading();
+
             try {
-                const records = await safeFetch(`${SERVER_URL}/api/attendance/${dateString}`);
-                const members = await safeFetch(`${SERVER_URL}/api/members`);
-
-                if (!Array.isArray(members) || members.length === 0) {
-                    displayElement.innerHTML = `<p class="text-gray-500 text-sm py-2">No members registered yet. Register members in the 'Register Member' tab.</p>`;
+                const records = await db.getAttendanceByDate(dateString);
+                const members = await db.getAllMembers();
+                
+                if (members.length === 0) {
+                    displayElement.innerHTML = `<p class="text-gray-500 text-sm py-2">No members registered yet.</p>`;
                     return;
                 }
-                 if (!Array.isArray(records)) { // Should not happen if API is correct
-                    displayElement.innerHTML = `<p class="text-red-500 text-sm py-2">Error: Attendance data is not in expected format.</p>`;
-                    return;
-                }
-
-
+                
                 let listHtml = '';
-                if (members.length > 0) {
-                    members.forEach(member => {
-                        const attended = records.some(r => r.memberId === member._id);
-                        listHtml += `
-                            <div class="py-3 sm:py-4 flex items-center justify-between">
-                                <p class="text-sm font-medium text-gray-900 truncate">${member.name}</p>
-                                ${attended
-                                    ? '<span class="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-green-600 bg-green-200">PRESENT</span>'
-                                    : '<span class="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-red-600 bg-red-200">ABSENT</span>'}
-                            </div>
-                        `;
-                    });
-                }
-                if (listHtml === '') {
-                     listHtml = `<p class="text-gray-500 text-sm py-2">No attendance records found for ${displayFriendlyDate(dateString)} among registered members.</p>`;
-                }
+                members.forEach(member => {
+                    const attended = records.some(r => r.memberId === member._id);
+                    listHtml += `
+                        <div class="py-3 sm:py-4 flex items-center justify-between">
+                            <p class="text-sm font-medium text-gray-900 truncate">${member.name}</p>
+                            ${attended 
+                                ? '<span class="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-green-600 bg-green-200">PRESENT</span>' 
+                                : '<span class="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-red-600 bg-red-200">ABSENT</span>'}
+                        </div>
+                    `;
+                });
+                
                 displayElement.innerHTML = listHtml;
-
             } catch (error) {
-                console.error(`Attendance load error for date ${dateString}:`, error);
-                displayElement.innerHTML = `<p class="text-red-500 text-sm py-2">Error loading attendance: ${error.message}</p>`;
+                console.error(`Attendance load error:`, error);
+                displayElement.innerHTML = `<p class="text-red-500 text-sm py-2">Error loading attendance. ${error.message}</p>`;
             } finally {
                 hideLoading();
             }
@@ -496,22 +508,21 @@
             await fetchAndDisplayAttendance(selectedDate, historicalAttendanceListEl);
         });
 
-        closeModalButton.addEventListener('click', () => { qrCodeModal.style.display = "none"; });
-        window.addEventListener('click', (event) => {
-            if (event.target == qrCodeModal) qrCodeModal.style.display = "none";
+        // Modal Close Handler
+        closeModalButton.addEventListener('click', () => {
+            qrCodeModal.style.display = "none";
         });
-
-        historicalDateInput.value = formatDate(new Date());
-
-        // Initial load: Activate default tab's logic if needed
-        // The 'View Attendance' tab with 'Today' subtab is active by default in HTML.
-        // So, load today's attendance on initial page load.
-        document.addEventListener('DOMContentLoaded', () => {
-            if (document.querySelector('.tab-button[data-tab="view"]').classList.contains('active') &&
-                document.querySelector('.subtab-button[data-subtab="today"]').classList.contains('active')) {
-                loadTodaysAttendance();
+        window.addEventListener('click', (event) => {
+            if (event.target == qrCodeModal) {
+                qrCodeModal.style.display = "none";
             }
         });
+
+        // Set default date for historical input to today
+        historicalDateInput.value = formatDate(new Date());
+
+        // Initial load for today's attendance
+        loadTodaysAttendance();
     </script>
 </body>
 </html>
