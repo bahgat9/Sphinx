@@ -501,7 +501,7 @@
                 const cameraId = cameras.find(c => c.label.includes('back'))?.id || cameras[0].id;
                 
                 await html5QrCode.start(
-                    cameraId,
+                    { facingMode: { exact: "environment" } },
                     config,
                     onScanSuccess,
                     onScanFailure
